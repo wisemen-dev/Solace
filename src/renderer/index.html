@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+  <title>Solace</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">❉</span>
+        <span class="brand-name">Solace</span>
+      </div>
+
+      <button id="btnImport" class="btn-primary">＋ 导入 PDF</button>
+
+      <nav class="side-section">
+        <div class="side-head">
+          <span>分类</span>
+          <button id="btnAddCat" class="btn-ghost" title="新建分类">＋</button>
+        </div>
+        <ul id="catList" class="side-list"></ul>
+      </nav>
+
+      <nav class="side-section">
+        <div class="side-head">
+          <span>标签</span>
+          <button id="btnAddTag" class="btn-ghost" title="新建标签">＋</button>
+        </div>
+        <ul id="tagList" class="side-list"></ul>
+      </nav>
+
+      <div class="side-foot">本地资料库 · 数据不出你的电脑</div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <input id="searchInput" class="search" type="search" placeholder="搜索标题…" />
+        <span id="countText" class="count"></span>
+      </header>
+      <section id="docGrid" class="doc-grid"></section>
+    </main>
+  </div>
+
+  <!-- 预览浮层 -->
+  <div id="previewOverlay" class="preview-overlay" hidden>
+    <div class="preview-head">
+      <span id="previewTitle" class="preview-title"></span>
+      <span id="previewPage" class="preview-page"></span>
+      <div class="preview-actions">
+        <button id="btnPreviewExternal" class="btn-ghost">外部打开</button>
+        <button id="btnPreviewClose" class="btn-ghost">✕</button>
+      </div>
+    </div>
+    <div id="previewBody" class="preview-body">
+      <canvas id="previewCanvas"></canvas>
+    </div>
+    <div class="preview-foot">
+      <button id="btnPrevPage" class="btn-ghost">← 上一页</button>
+      <button id="btnNextPage" class="btn-ghost">下一页 →</button>
+    </div>
+  </div>
+
+  <!-- 文档编辑对话框 -->
+  <dialog id="editDialog" class="dialog">
+    <h3>编辑文档</h3>
+    <label class="field">标题<input id="editTitle" type="text" /></label>
+    <label class="field">分类<select id="editCat"></select></label>
+    <div class="field">标签<div id="editTags" class="tag-checks"></div></div>
+    <div class="dialog-foot">
+      <button id="btnEditCancel" class="btn-ghost">取消</button>
+      <button id="btnEditSave" class="btn-primary">保存</button>
+    </div>
+  </dialog>
+
+  <!-- 通用文本输入对话框（Electron 不支持 window.prompt） -->
+  <dialog id="inputDialog" class="dialog dialog-narrow">
+    <h3 id="inputDialogTitle"></h3>
+    <input id="inputDialogInput" type="text" class="field-input" />
+    <div class="dialog-foot">
+      <button id="inputDialogCancel" class="btn-ghost">取消</button>
+      <button id="inputDialogOk" class="btn-primary">确定</button>
+    </div>
+  </dialog>
+
+  <div id="toastBox" class="toast-box"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

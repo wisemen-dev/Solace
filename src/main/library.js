@@ -1,0 +1,165 @@
+const fs = require('fs')
+const fsp = require('fs/promises')
+const path = require('path')
+const crypto = require('crypto')
+
+// 资料库数据层：全部元数据存于 library.json，PDF 副本存于 files/<id>.pdf。
+// 写入统一走 save() 的「临时文件 + 原子重命名」，避免中断损坏数据。
+
+let rootDir = null
+let dataFile = null
+let data = null
+
+function init (userDataDir) {
+  rootDir = path.join(userDataDir, 'SolaceLibrary')
+  dataFile = path.join(rootDir, 'library.json')
+  fs.mkdirSync(path.join(rootDir, 'files'), { recursive: true })
+  if (fs.existsSync(dataFile)) {
+    data = JSON.parse(fs.readFileSync(dataFile, 'utf8'))
+  } else {
+    data = {
+      version: 1,
+      createdAt: new Date().toISOString(),
+      categories: [], // { id, name, parentId: null }
+      tags: [],       // { id, name }
+      documents: []   // 见 importPdf()
+    }
+    save()
+  }
+}
+
+function getData () {
+  return data
+}
+
+function save () {
+  const tmp = dataFile + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8')
+  fs.renameSync(tmp, dataFile)
+}
+
+function findDoc (id) {
+  const doc = data.documents.find(d => d.id === id)
+  if (!doc) throw new Error(`文档不存在: ${id}`)
+  return doc
+}
+
+async function importPdf (filePath) {
+  const stat = await fsp.stat(filePath)
+  if (!stat.isFile()) throw new Error('不是常规文件')
+  if (path.extname(filePath).toLowerCase() !== '.pdf') throw new Error('仅支持 PDF 文件')
+  const id = crypto.randomUUID()
+  await fsp.copyFile(filePath, path.join(rootDir, 'files', `${id}.pdf`))
+  const doc = {
+    id,
+    title: path.basename(filePath, path.extname(filePath)),
+    fileName: path.basename(filePath),
+    originalPath: filePath,
+    size: stat.size,
+    addedAt: new Date().toISOString(),
+    openedAt: null,
+    openCount: 0,
+    categoryId: null,
+    tagIds: []
+  }
+  data.documents.push(doc)
+  save()
+  return doc
+}
+
+// patch 只允许改这三个字段，其余字段由系统维护
+function updateDoc (id, patch) {
+  const doc = findDoc(id)
+  for (const key of ['title', 'categoryId', 'tagIds']) {
+    if (key in patch) doc[key] = patch[key]
+  }
+  save()
+  return doc
+}
+
+function removeDoc (id) {
+  const doc = findDoc(id)
+  fs.rmSync(path.join(rootDir, 'files', `${doc.id}.pdf`), { force: true })
+  data.documents = data.documents.filter(d => d.id !== id)
+  save()
+  return true
+}
+
+function getDocPath (id) {
+  return path.join(rootDir, 'files', `${findDoc(id).id}.pdf`)
+}
+
+function readFileBuffer (id) {
+  // 直接返回 Buffer，由 Electron IPC 结构化克隆为渲染进程的 Uint8Array。
+  // 不能返回 buffer.buffer（ArrayBuffer），Node 缓冲池会使其大于实际文件长度。
+  return fs.readFileSync(getDocPath(id))
+}
+
+function markOpened (id) {
+  const doc = findDoc(id)
+  doc.openedAt = new Date().toISOString()
+  doc.openCount += 1
+  save()
+}
+
+function addCategory (name) {
+  const trimmed = String(name || '').trim()
+  if (!trimmed) throw new Error('分类名不能为空')
+  if (data.categories.some(c => c.name === trimmed)) throw new Error(`分类已存在: ${trimmed}`)
+  const cat = { id: crypto.randomUUID(), name: trimmed, parentId: null }
+  data.categories.push(cat)
+  save()
+  return cat
+}
+
+function renameCategory (id, name) {
+  const cat = data.categories.find(c => c.id === id)
+  if (!cat) throw new Error(`分类不存在: ${id}`)
+  const trimmed = String(name || '').trim()
+  if (!trimmed) throw new Error('分类名不能为空')
+  if (data.categories.some(c => c.id !== id && c.name === trimmed)) throw new Error(`分类已存在: ${trimmed}`)
+  cat.name = trimmed
+  save()
+  return cat
+}
+
+function removeCategory (id) {
+  data.documents.forEach(d => { if (d.categoryId === id) d.categoryId = null })
+  data.categories = data.categories.filter(c => c.id !== id)
+  save()
+  return true
+}
+
+function addTag (name) {
+  const trimmed = String(name || '').trim()
+  if (!trimmed) throw new Error('标签名不能为空')
+  const existed = data.tags.find(t => t.name === trimmed)
+  if (existed) return existed
+  const tag = { id: crypto.randomUUID(), name: trimmed }
+  data.tags.push(tag)
+  save()
+  return tag
+}
+
+function removeTag (id) {
+  data.documents.forEach(d => { d.tagIds = d.tagIds.filter(t => t !== id) })
+  data.tags = data.tags.filter(t => t.id !== id)
+  save()
+  return true
+}
+
+module.exports = {
+  init,
+  getData,
+  importPdf,
+  updateDoc,
+  removeDoc,
+  getDocPath,
+  readFileBuffer,
+  markOpened,
+  addCategory,
+  renameCategory,
+  removeCategory,
+  addTag,
+  removeTag
+}
