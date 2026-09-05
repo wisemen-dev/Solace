@@ -14,10 +14,11 @@
 | 操作系统 | Windows 10.0.26200 x64 |
 | 工作区路径 | `E:\Learning\pycharm\ExperProject\Solace_Rust` |
 | Git 实际安装位置 | `C:\Program Files\Git` |
-| Node.js / npm 版本 | 待补（本次初始化时 Shell 故障，见异常记录 #2） |
-| Electron 目标版本 | ^38.0.0（package.json 已锁定，安装后以 `npm ls electron` 实测为准） |
-| pdfjs-dist 目标版本 | ^4.10.38 |
-| 版本管理 | 尚未执行 `git init`（Shell 故障所致，见第 5 节待办） |
+| Node.js / npm 版本 | Node v24.15.0 / npm 12.0.1（2026-09-05 实测） |
+| Git 版本 | 2.54.0.windows.1（2026-09-05 实测） |
+| Electron 实测版本 | 38.8.6 |
+| pdfjs-dist 实测版本 | 4.10.38 |
+| 版本管理 | 已执行 `git init`（main 分支），首次提交 ea5665c |
 
 ## 2. 环境异常记录
 
@@ -47,6 +48,10 @@
      若指向 `E:\Git` 改为 `C:\Program Files\Git`（或删除后重装 Git for Windows）；
   3. 最简单：重新运行 Git for Windows 安装程序选择 Repair。
 - **验证方法**：修复后在新 ZCode 会话中执行 `echo ok`，能返回即恢复。
+- **结案（2026-09-05）**：未做任何修复操作，同日稍后 Shell 自行恢复；
+  `E:\Git` 目录实际存在，推测当时为 E: 盘瞬时未就绪/重新挂载所致。
+  用户确认本机 Git 环境正常。若复发，按上述排查项依次检查；
+  该故障只影响开发会话内的命令执行，与应用本身无关。
 
 ## 3. 产品决策记录（v0.1 范围的来源）
 
@@ -79,21 +84,33 @@ npm install
 npm start
 ```
 
-初始化本仓库时（2026-09-05）实际执行的记录：项目骨架与文档由 ZCode
-以文件写入方式直接创建（当时 Shell 故障，见异常 #2），`npm install`
-与 `npm start` 尚未在本会话执行验证——首次运行若遇问题，优先检查
-Node 版本与 electron 二进制下载（可设置镜像
-`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`）。
+初始化本仓库时（2026-09-05）实测踩到的两个坑，复现时必看：
+
+1. **npm ≥ 12 默认拦截依赖安装脚本**：`npm install` 后 electron 的
+   postinstall 被阻止，Electron 二进制不会下载。需执行
+   `npm install-scripts approve electron` 后再 `npm rebuild electron`。
+2. **Electron 二进制默认走境外源，可能极慢**：实测直连 12 分钟未完成，
+   换镜像后数十秒完成：
+   `ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" npm rebuild electron`。
 
 ## 5. 待办（初始化遗留）
 
-- [ ] 修复 Shell 配置（异常 #2），补记 Node.js / npm / electron 实测版本到第 1 节
-- [ ] 执行 `git init` 并完成首次提交
-- [ ] 首次 `npm start` 运行验证，结果追加到本文件第 6 节
+- [x] 补记 Node.js / npm / Git / electron 实测版本到第 1 节
+- [x] 执行 `git init` 并完成首次提交（ea5665c）
+- [x] 首次 `npm start` 运行验证，结果见第 6 节
 
 ## 6. 运行验证记录
 
-（预留：每次重大环境变更或首次运行验证后在此追加时间、命令与结果。）
+### 2026-09-05 · v0.1.0 首次启动验证
+
+- 命令：`npm start`
+- 结果：**成功**。启动日志无异常输出，进程管理器可见 4 个 electron.exe
+  （主进程 + GPU 等子进程），窗口正常显示。
+- 期间验证：`node_modules/pdfjs-dist/build/pdf.min.mjs` 与
+  `pdf.worker.min.mjs` 存在，渲染进程引用路径（`../../../node_modules/...`）
+  与实际位置一致。
+- 待人工确认项：导入真实 PDF → 预览翻页 → 外部打开 → 分类/标签编辑
+  等交互流程，由日常使用反馈。
 
 ## 7. 排查指引
 
