@@ -19,7 +19,8 @@ Solace 是一款 Windows 桌面应用（Electron），把散落各处的 PDF 收
 - 沉睡提醒：超过 30 天未读的书在顶栏 🌙 徽章提示，清单可一键打开
 
 **路线图**
-- 候选：打包发布（electron-builder → 安装包）、按分类的统计图表、全文检索
+- 既定路线已全部完成：v0.1 管理底座 → v0.2 封面墙 → v0.3 足迹与彩蛋 → v0.4 图表与打包
+- 候选方向（按需再启动）：批量改名归档工具、WebDAV 备份、浅色主题
 
 ## 快速开始
 
@@ -35,6 +36,21 @@ npm start
 
 开发/测试技巧：`SOLACE_DATA_DIR=<目录> npm start` 可将资料库隔离到指定位置；
 `node scripts/make-sample-pdfs.js` 可生成测试用 PDF（输出到 `tmp/`）。
+
+## 打包发布
+
+```bash
+npm run dist
+```
+
+产物：`dist/Solace-Setup-<版本>.exe`（NSIS 安装包，可选安装目录）+
+`dist/win-unpacked/Solace.exe`（免安装绿色版）。打包前如需更新图标，
+执行 `npm run icon`（纯 Node 生成的 `build/icon.ico`，含 256/48/32/16 四档）。
+
+说明：打包关闭了 asar，原因是渲染进程直接以相对路径引用 node_modules 内
+pdf.js 的 ESM 模块与 worker，asar 内的 Worker 加载存在已知限制。
+国内网络建议为构建工具链设置镜像：
+`ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`。
 
 ## 目录结构
 

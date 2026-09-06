@@ -1,16 +1,44 @@
 {
   "name": "solace",
   "productName": "Solace",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Solace — 本地 PDF 私人图书馆：集中管理、手动分类、轻量预览。",
   "author": "Molly",
   "license": "MIT",
   "main": "src/main/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder --win nsis",
+    "icon": "node scripts/make-icon.js"
+  },
+  "build": {
+    "appId": "com.molly.solace",
+    "productName": "Solace",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asar": false,
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Solace",
+      "artifactName": "Solace-Setup-${version}.${ext}"
+    }
   },
   "devDependencies": {
-    "electron": "^38.0.0"
+    "electron": "^38.0.0",
+    "electron-builder": "^26.15.3"
   },
   "dependencies": {
     "pdfjs-dist": "^4.10.38"

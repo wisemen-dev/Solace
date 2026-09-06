@@ -388,6 +388,58 @@ function updateDormantBadge () {
   btn.title = `${n} 本书已沉睡超过 ${DORMANT_DAYS} 天`
 }
 
+// 分类分布图表用的调色板（按分类顺序循环取色）
+const PALETTE = ['#6ea8fe', '#7bd88f', '#ffd166', '#ef8354', '#c792ea', '#4dd0e1', '#f06292', '#aed581', '#ffb74d']
+const MISC_COLOR = '#5b6672'
+
+function renderCategoryChart () {
+  const chart = $('#statsChart')
+  const docs = data.documents
+  if (!docs.length) {
+    chart.innerHTML = '<span style="color:var(--muted);font-size:12.5px;">还没有藏书，导入后这里会出现分类分布</span>'
+    return
+  }
+
+  const catStats = [
+    ...data.categories.map(c => ({ name: c.name, books: 0, opens: 0 })),
+    { name: '未分类', books: 0, opens: 0, misc: true }
+  ]
+  const indexOfCat = new Map(data.categories.map((c, i) => [c.id, i]))
+  for (const d of docs) {
+    const i = d.categoryId != null && indexOfCat.has(d.categoryId)
+      ? indexOfCat.get(d.categoryId)
+      : catStats.length - 1
+    catStats[i].books += 1
+    catStats[i].opens += d.openCount
+  }
+
+  const colored = catStats
+    .filter(s => s.books > 0)
+    .map((s, i) => ({ ...s, color: s.misc ? MISC_COLOR : PALETTE[i % PALETTE.length] }))
+
+  const total = docs.length
+  let acc = 0
+  const stops = colored.map(s => {
+    const from = (acc / total) * 100
+    acc += s.books
+    const to = (acc / total) * 100
+    return `${s.color} ${from}% ${to}%`
+  }).join(', ')
+
+  chart.innerHTML = `
+    <div class="donut" style="background: conic-gradient(${stops})">
+      <div class="donut-hole"><b>${total}</b><em>本书</em></div>
+    </div>
+    <ul class="legend">
+      ${colored.map(s => `
+        <li title="${esc(s.name)}">
+          <i style="background:${s.color}"></i>
+          <span class="n">${esc(s.name)}</span>
+          <span class="v">${s.books} 本 · 打开 ${s.opens} 次</span>
+        </li>`).join('')}
+    </ul>`
+}
+
 function renderStats () {
   const now = Date.now()
   const docs = data.documents
@@ -402,6 +454,8 @@ function renderStats () {
     <span class="stats-chip"><b>${inDays(7)}</b>次近 7 天</span>
     <span class="stats-chip"><b>${inDays(30)}</b>次近 30 天</span>
     <span class="stats-chip"><b>${dormant.length}</b>本沉睡中</span>`
+
+  renderCategoryChart()
 
   const titleOf = id => {
     const d = docs.find(x => x.id === id)

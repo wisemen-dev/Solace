@@ -3,6 +3,22 @@
 本项目的所有显著变更记录在此文件中。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.4.0] - 2026-09-06
+
+### 新增
+- 分类分布图表：足迹面板新增环形图（纯 CSS conic-gradient，零依赖）+ 图例，
+  展示各分类藏书占比与打开次数，中心显示总藏书数
+- 打包发布：electron-builder 打 NSIS 安装包（`npm run dist`），
+  产物 `dist/Solace-Setup-<版本>.exe`，同时输出免安装的 `dist/win-unpacked/`
+- 自制应用图标：`scripts/make-icon.js` 纯 Node 实现 PNG/ICO 编码器
+  （zlib + CRC32），生成含 256/48/32/16 四档的 `build/icon.ico`，无需设计工具
+- `npm run icon` 快捷重新生成图标
+
+### 变更
+- 打包配置关闭 asar：规避 pdf.js worker 无法从 asar 内加载的已知限制
+  （渲染进程以相对路径引用 node_modules 内的 ESM 模块）；`dist/` 保持忽略，
+  `build/icon.ico` 与图标生成脚本入库
+
 ## [0.3.1] - 2026-09-06
 
 ### 修复

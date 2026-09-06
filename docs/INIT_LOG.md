@@ -168,6 +168,24 @@ npm start
 - **经验**：中英混排标题里的空格是搜索的隐形陷阱，CJK 场景匹配前应做
   空白归一化。
 
+### 2026-09-06 · v0.4.0 分类分布图表 + 打包发布验证
+
+- **分类分布环形图**：打包版实测渲染正确（LearinngRust 蓝 2/3 + Stream 绿 1/3，
+  中心总藏书数），图例带「N 本 · 打开 M 次」，空库/未分类灰色分支已实现。
+- **打包**：`npm run dist` 产出 `dist/Solace-Setup-0.4.0.exe`（约 107 MB）与
+  `dist/win-unpacked/`。图标由 `scripts/make-icon.js` 纯 Node 生成（PNG 编码
+  用 zlib + 自实现 CRC32，ICO 内嵌 256/48/32/16 四档 PNG）。
+- **构建踩坑**：首次构建因工具链下载超时失败（600s request timeout）；
+  显式设置 `ELECTRON_BUILDER_BINARIES_MIRROR`（npmmirror）后重试约 90 秒完成。
+  若在别的机器复现，先设镜像再构建（见 README「打包发布」）。
+- **asar 决策**：打包配置 `asar: false`。原因：渲染进程以相对路径引用
+  node_modules 内 pdf.js 的 ESM 与 worker 文件，Worker 无法从 asar 内加载是
+  Electron 已知限制。个人本地应用可接受；若未来要恢复 asar，需把 pdfjs
+  复制进应用目录并用 asarUnpack。
+- **打包版实测**（截图确认）：图标已嵌入（标题栏/任务栏为星芒图案）、
+  资料库无缝继承（userData 路径大小写不敏感，dev 的 `%APPDATA%/solace`
+  与打包的 `%APPDATA%/Solace` 同目录）、封面墙与足迹面板全部正常。
+
 ## 7. 排查指引
 
 - 应用能启动但预览报错 → 先看是否 pdf.js worker 加载失败（渲染进程控制台），

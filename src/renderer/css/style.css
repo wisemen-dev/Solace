@@ -286,6 +286,27 @@ button { font-family: inherit; }
   text-transform: uppercase; margin-bottom: 8px;
 }
 .stats-sub { letter-spacing: 0; text-transform: none; font-weight: 400; }
+
+/* 分类分布：环形图（conic-gradient，零依赖）+ 图例 */
+.stats-chart { display: flex; align-items: center; gap: 22px; }
+.donut {
+  width: 118px; height: 118px; border-radius: 50%;
+  position: relative; flex-shrink: 0;
+  animation: donut-in 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+}
+@keyframes donut-in { from { transform: scale(0.7); opacity: 0; } }
+.donut-hole {
+  position: absolute; inset: 25px; border-radius: 50%;
+  background: var(--panel);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.donut-hole b { font-size: 20px; line-height: 1.2; }
+.donut-hole em { font-style: normal; font-size: 11px; color: var(--muted); }
+.legend { list-style: none; flex: 1; display: flex; flex-direction: column; gap: 5px; max-height: 150px; overflow-y: auto; }
+.legend li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.legend i { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
+.legend .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend .v { color: var(--muted); font-size: 11.5px; }
 .stats-list {
   list-style: none; display: flex; flex-direction: column; gap: 6px;
   max-height: 230px; overflow-y: auto;
