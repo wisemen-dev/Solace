@@ -258,7 +258,7 @@ function renderDocList () {
       ? textHit(d.id, nkw)
       : 0
 
-    if (spine) {
+    if (prefs.viewMode === 'spine') {
       // 书脊陈列：纯浏览视图（点击预览、拖拽归档仍可用）
       return `
     <div class="doc-card" data-id="${d.id}" draggable="true" style="--i:${i}">
