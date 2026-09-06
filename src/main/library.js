@@ -8,11 +8,14 @@ const crypto = require('crypto')
 
 let rootDir = null
 let dataFile = null
+let textIndexFile = null
 let data = null
+let textIndex = null
 
 function init (userDataDir) {
   rootDir = path.join(userDataDir, 'SolaceLibrary')
   dataFile = path.join(rootDir, 'library.json')
+  textIndexFile = path.join(rootDir, 'textindex.json')
   fs.mkdirSync(path.join(rootDir, 'files'), { recursive: true })
   fs.mkdirSync(path.join(rootDir, 'covers'), { recursive: true })
   if (fs.existsSync(dataFile)) {
@@ -30,6 +33,15 @@ function init (userDataDir) {
   }
   // 0.2.0 及之前建的库没有 history 字段，补齐
   if (!Array.isArray(data.history)) data.history = []
+  // 全文索引存独立文件，避免撑大 library.json；顺带清掉指向已删除文档的残留
+  if (fs.existsSync(textIndexFile)) {
+    textIndex = JSON.parse(fs.readFileSync(textIndexFile, 'utf8'))
+    const ids = new Set(data.documents.map(d => d.id))
+    for (const id of Object.keys(textIndex)) {
+      if (!ids.has(id)) delete textIndex[id]
+    }
+    saveTextIndex()
+  }
 }
 
 function getData () {
@@ -86,6 +98,10 @@ function removeDoc (id) {
   fs.rmSync(path.join(rootDir, 'files', `${doc.id}.pdf`), { force: true })
   fs.rmSync(path.join(rootDir, 'covers', `${doc.id}.jpg`), { force: true })
   data.documents = data.documents.filter(d => d.id !== id)
+  if (textIndex && textIndex[id]) {
+    delete textIndex[id]
+    saveTextIndex()
+  }
   save()
   return true
 }
@@ -107,6 +123,43 @@ function markOpened (id) {
   data.history.push({ docId: id, at: doc.openedAt })
   if (data.history.length > 200) data.history = data.history.slice(-200)
   save()
+}
+
+// 阅读进度：由预览翻页时调用，记录「读到第几页 / 共几页」
+function setProgress (id, page, totalPages) {
+  const doc = findDoc(id)
+  page = Math.floor(Number(page))
+  totalPages = Math.floor(Number(totalPages))
+  if (!(page >= 1) || !(totalPages >= 1)) return doc
+  doc.progress = { page: Math.min(page, totalPages), totalPages, at: new Date().toISOString() }
+  save()
+  return doc
+}
+
+// ---- 全文索引 ----
+// 渲染进程闲时用 pdf.js 提取每页文本（归一化后的字符串数组）传回，
+// 存独立的 textindex.json，与 library.json 一样走「临时文件+原子重命名」。
+
+function getTextIndex () {
+  return textIndex || {}
+}
+
+function saveTextIndex () {
+  const tmp = textIndexFile + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(textIndex, null, 2), 'utf8')
+  fs.renameSync(tmp, textIndexFile)
+}
+
+function setTextIndex (id, payload) {
+  findDoc(id)
+  if (!textIndex) textIndex = {}
+  textIndex[id] = {
+    pages: Array.isArray(payload && payload.pages) ? payload.pages.map(String) : [],
+    failed: !!(payload && payload.failed),
+    at: new Date().toISOString()
+  }
+  saveTextIndex()
+  return true
 }
 
 // ---- 封面 ----
@@ -184,8 +237,11 @@ module.exports = {
   getDocPath,
   readFileBuffer,
   markOpened,
+  setProgress,
   setCover,
   getCoverDataUrl,
+  getTextIndex,
+  setTextIndex,
   addCategory,
   renameCategory,
   removeCategory,

@@ -11,6 +11,10 @@ contextBridge.exposeInMainWorld('solace', {
   removeDoc: (id) => ipcRenderer.invoke('doc:remove', id),
   openDoc: (id) => ipcRenderer.invoke('doc:open', id),
   readPreview: (id) => ipcRenderer.invoke('preview:read', id),
+  setProgress: (id, page, totalPages) => ipcRenderer.invoke('doc:setProgress', id, page, totalPages),
+  // 全文索引
+  getTextIndex: () => ipcRenderer.invoke('textindex:get'),
+  setTextIndex: (id, payload) => ipcRenderer.invoke('textindex:set', id, payload),
   // 封面
   setCover: (id, dataUrl) => ipcRenderer.invoke('cover:set', id, dataUrl),
   getCover: (id) => ipcRenderer.invoke('cover:get', id),

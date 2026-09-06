@@ -38,8 +38,9 @@
 
     <main class="main">
       <header class="topbar">
-        <input id="searchInput" class="search" type="search" placeholder="搜索标题…" />
+        <input id="searchInput" class="search" type="search" placeholder="搜索标题或全文…" />
         <span id="countText" class="count"></span>
+        <span id="indexStatus" class="index-status" hidden></span>
         <button id="btnDormant" class="btn-ghost dormant-badge" hidden title="">🌙 <span id="dormantCount">0</span></button>
         <button id="btnStats" class="btn-ghost" title="阅读足迹">足迹</button>
       </header>
@@ -49,10 +50,14 @@
 
   <!-- 预览浮层 -->
   <div id="previewOverlay" class="preview-overlay" hidden>
+    <div id="tocPanel" class="toc-panel" hidden>
+      <ul id="tocList" class="toc-list"></ul>
+    </div>
     <div class="preview-head">
       <span id="previewTitle" class="preview-title"></span>
       <span id="previewPage" class="preview-page"></span>
       <div class="preview-actions">
+        <button id="btnToc" class="btn-ghost" hidden title="本书的书签目录">目录</button>
         <button id="btnPreviewExternal" class="btn-ghost">外部打开</button>
         <button id="btnPreviewClose" class="btn-ghost">✕</button>
       </div>

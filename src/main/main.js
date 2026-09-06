@@ -59,6 +59,7 @@ function registerIpc () {
 
   ipcMain.handle('doc:update', (_e, id, patch) => library.updateDoc(id, patch))
   ipcMain.handle('doc:remove', (_e, id) => library.removeDoc(id))
+  ipcMain.handle('doc:setProgress', (_e, id, page, totalPages) => library.setProgress(id, page, totalPages))
 
   ipcMain.handle('doc:open', async (_e, id) => {
     const abs = library.getDocPath(id)
@@ -72,6 +73,9 @@ function registerIpc () {
 
   ipcMain.handle('cover:set', (_e, id, dataUrl) => library.setCover(id, dataUrl))
   ipcMain.handle('cover:get', (_e, id) => library.getCoverDataUrl(id))
+
+  ipcMain.handle('textindex:get', () => library.getTextIndex())
+  ipcMain.handle('textindex:set', (_e, id, payload) => library.setTextIndex(id, payload))
 
   ipcMain.handle('cat:add', (_e, name) => library.addCategory(name))
   ipcMain.handle('cat:rename', (_e, id, name) => library.renameCategory(id, name))

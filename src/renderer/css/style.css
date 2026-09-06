@@ -91,6 +91,7 @@ body {
 }
 .search:focus { border-color: var(--accent); }
 .count { font-size: 12px; color: var(--muted); margin-left: auto; }
+.index-status { font-size: 11.5px; color: var(--muted); }
 
 /* ---------- 封面墙 ---------- */
 .doc-grid {
@@ -167,6 +168,32 @@ body {
   font-size: 10.5px; background: var(--accent-soft); color: var(--accent);
   border-radius: 999px; padding: 1px 8px;
 }
+/* 全文命中标记：搜索词只在正文出现时提示首个命中页 */
+.doc-hit {
+  font-size: 10.5px; background: rgba(229, 181, 103, 0.16); color: #e5b567;
+  border-radius: 999px; padding: 1px 8px; cursor: pointer;
+}
+
+/* 封面进度环：conic-gradient + mask 抠成圆环，读毕（100%）变绿打勾 */
+.progress-ring {
+  position: absolute; top: 7px; right: 7px; z-index: 3;
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
+}
+.progress-ring i {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(var(--accent) calc(var(--p) * 1%), rgba(255, 255, 255, 0.35) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px));
+}
+.progress-ring.done i {
+  background: conic-gradient(#7bd88f calc(var(--p) * 1%), rgba(255, 255, 255, 0.35) 0);
+}
+.progress-ring span {
+  position: relative;
+  font-size: 8.5px; font-weight: 700; color: #fff;
+}
 
 /* ---------- 按钮 ---------- */
 button { font-family: inherit; }
@@ -194,7 +221,8 @@ button { font-family: inherit; }
 .preview-overlay[hidden] { display: none; }
 .preview-head {
   display: flex; align-items: center; gap: 14px;
-  padding: 12px 20px; border-bottom: 1px solid var(--line);
+  height: 50px; padding: 0 20px; flex-shrink: 0;
+  border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
 .preview-title {
@@ -213,9 +241,30 @@ button { font-family: inherit; }
   align-self: flex-start;
 }
 .preview-foot {
-  display: flex; justify-content: center; gap: 12px;
-  padding: 10px; border-top: 1px solid var(--line); background: var(--panel);
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  height: 46px; padding: 0 12px; flex-shrink: 0;
+  border-top: 1px solid var(--line); background: var(--panel);
 }
+
+/* 目录面板（PDF 书签大纲）：锚定在预览头部与底部之间 */
+.toc-panel {
+  position: absolute; left: 12px; top: 62px; bottom: 58px; width: 256px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  overflow-y: auto; z-index: 6; padding: 6px;
+}
+.toc-list { list-style: none; }
+.toc-list li { margin: 1px 0; }
+.toc-list button {
+  display: block; width: 100%; text-align: left;
+  border: none; background: none; color: var(--text);
+  font-size: 12.5px; line-height: 1.5; cursor: pointer;
+  padding: 7px 9px; border-radius: 7px;
+  padding-left: calc(9px + var(--d, 0) * 14px);
+  transition: background 0.12s, color 0.12s;
+}
+.toc-list button:hover { background: var(--card-hover); color: var(--accent); }
+.toc-dead { display: block; color: var(--muted); font-size: 12px; padding: 7px 9px; padding-left: calc(9px + var(--d, 0) * 14px); }
 
 /* ---------- 对话框 ---------- */
 .dialog {

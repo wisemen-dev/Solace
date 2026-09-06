@@ -1,25 +1,13 @@
 // 生成最小合法 PDF 示例（纯 Node 无依赖），用于开发期视觉测试。
 // 用法：node scripts/make-sample-pdfs.js [输出目录，默认 ../tmp]
-// 产出的 PDF 为单页：标题文字 + 大色块，不同样本颜色不同。
+// 产出单页样本（标题文字 + 大色块）与一本三页带书签目录的小书，
+// 后者用于验证预览大纲面板、翻页与阅读进度。
 
 const fs = require('fs')
 const path = require('path')
 
-function makePdf (file, title, color) {
-  const stream = [
-    `BT /F1 34 Tf ${color} rg 64 726 Td (${title}) Tj ET`,
-    `BT /F1 13 Tf 0.35 0.39 0.45 rg 64 690 Td (Solace sample document for visual testing.) Tj ET`,
-    `${color} rg 64 140 467 520 re f`
-  ].join('\n')
-
-  const objects = []
-  objects[1] = '<< /Type /Catalog /Pages 2 0 R >>'
-  objects[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>'
-  objects[3] = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] ' +
-    '/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>'
-  objects[4] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
-  objects[5] = `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`
-
+// 通用写出：objects[i] 为第 i 个间接对象的文本，自动生成 xref 与 trailer
+function writePdf (file, objects) {
   let out = '%PDF-1.4\n'
   const offsets = [0]
   for (let i = 1; i < objects.length; i++) {
@@ -37,9 +25,60 @@ function makePdf (file, title, color) {
   console.log('已生成', file)
 }
 
+function makePdf (file, title, color) {
+  const stream = [
+    `BT /F1 34 Tf ${color} rg 64 726 Td (${title}) Tj ET`,
+    `BT /F1 13 Tf 0.35 0.39 0.45 rg 64 690 Td (Solace sample document for visual testing.) Tj ET`,
+    `${color} rg 64 140 467 520 re f`
+  ].join('\n')
+
+  const objects = []
+  objects[1] = '<< /Type /Catalog /Pages 2 0 R >>'
+  objects[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>'
+  objects[3] = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] ' +
+    '/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>'
+  objects[4] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+  objects[5] = `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`
+
+  writePdf(file, objects)
+}
+
+// 三页带书签目录的小书：每页不同章节文字（供全文检索验证）+ 大色块
+function makeBookPdf (file, title, color) {
+  const chapter = (n, text) => [
+    `BT /F1 30 Tf ${color} rg 64 726 Td (${title}) Tj ET`,
+    `BT /F1 13 Tf 0.35 0.39 0.45 rg 64 690 Td (Chapter ${n} of ${title}.) Tj ET`,
+    `BT /F1 15 Tf 0.20 0.24 0.30 rg 64 640 Td (${text}) Tj ET`,
+    `${color} rg 64 120 467 480 re f`
+  ].join('\n')
+
+  const pages = [
+    { n: 1, text: 'Foundations of quiet reading.' },
+    { n: 2, text: 'Deep work needs deep rest.' },
+    { n: 3, text: 'The pragmatic reader always returns.' }
+  ]
+  const objects = []
+  objects[1] = '<< /Type /Catalog /Pages 2 0 R /Outlines 10 0 R >>'
+  objects[2] = '<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>'
+  pages.forEach((p, i) => {
+    const stream = chapter(p.n, p.text)
+    objects[3 + i] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] ` +
+      `/Resources << /Font << /F1 9 0 R >> >> /Contents ${6 + i} 0 R >>`
+    objects[6 + i] = `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`
+  })
+  objects[9] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+  objects[10] = '<< /Type /Outlines /First 11 0 R /Last 13 0 R /Count 3 >>'
+  objects[11] = '<< /Title (Part One - Foundations) /Parent 10 0 R /Next 12 0 R /Dest [3 0 R /Fit] >>'
+  objects[12] = '<< /Title (Part Two - Deep Work) /Parent 10 0 R /Prev 11 0 R /Next 13 0 R /Dest [4 0 R /Fit] >>'
+  objects[13] = '<< /Title (Part Three - Return) /Parent 10 0 R /Prev 12 0 R /Dest [5 0 R /Fit] >>'
+
+  writePdf(file, objects)
+}
+
 const outDir = process.argv[2] || path.join(__dirname, '..', 'tmp')
 fs.mkdirSync(outDir, { recursive: true })
 
 makePdf(path.join(outDir, 'sample-blue.pdf'), 'Sample: Deep Work', '0.30 0.55 0.95')
 makePdf(path.join(outDir, 'sample-orange.pdf'), 'Sample: The Pragmatic Way', '0.92 0.49 0.19')
 makePdf(path.join(outDir, 'sample-green.pdf'), 'Sample: Quiet Reading', '0.20 0.65 0.45')
+makeBookPdf(path.join(outDir, 'sample-outline-book.pdf'), 'Sample: A Small Book', '0.55 0.45 0.85')

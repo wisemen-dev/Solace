@@ -1,6 +1,7 @@
 import { openPreview, isPreviewOpen } from './preview.js'
 import { ensureCover, coverCache } from './covers.js'
 import { burst } from './confetti.js'
+import { initIndex, ensureQueued, textHit } from './textindex.js'
 
 let data = null
 const filters = { categoryId: undefined, tagId: null, keyword: '' }
@@ -16,6 +17,8 @@ refresh()
 async function refresh () {
   data = await window.solace.getLibrary()
   renderAll()
+  // 每次刷新都同步一次索引状态：缺索引的书会排进后台提取队列
+  initIndex(data.documents)
 }
 
 function renderAll () {
@@ -82,7 +85,8 @@ function visibleDocs () {
     if (filters.categoryId === null && d.categoryId !== null) return false
     if (typeof filters.categoryId === 'string' && d.categoryId !== filters.categoryId) return false
     if (filters.tagId && !d.tagIds.includes(filters.tagId)) return false
-    if (kw && !normText(d.title).includes(kw) && !normText(d.fileName).includes(kw)) return false
+    // 三级命中：标题 / 文件名 / 全文索引
+    if (kw && !normText(d.title).includes(kw) && !normText(d.fileName).includes(kw) && !textHit(d.id, kw)) return false
     return true
   })
 }
@@ -104,12 +108,22 @@ function renderDocList () {
     return
   }
 
+  const nkw = normText(filters.keyword)
+
   $('#docGrid').innerHTML = docs.map((d, i) => {
     const cached = cache.get(d.id)
+    // 封面进度环：只在读过（progress 存在）时显示，读毕变绿打勾
+    const pr = d.progress
+    const pct = pr && pr.totalPages >= 1 ? Math.min(100, Math.round(pr.page / pr.totalPages * 100)) : 0
+    // 全文命中标记：标题/文件名没中但正文命中时提示首个命中页
+    const hitPage = nkw && !normText(d.title).includes(nkw) && !normText(d.fileName).includes(nkw)
+      ? textHit(d.id, nkw)
+      : 0
     return `
     <div class="doc-card" data-id="${d.id}" draggable="true" style="--i:${i}">
       <div class="doc-cover" data-action="preview-doc" data-id="${d.id}" title="点击预览">
         <img class="doc-cover-img" data-doc-id="${d.id}" alt="" ${cached ? `src="${cached}"` : ''}/>
+        ${pct ? `<div class="progress-ring${pct >= 100 ? ' done' : ''}" style="--p:${pct}" title="读到 ${pr.page}/${pr.totalPages} 页（${pct}%）"><i></i><span>${pct >= 100 ? '✓' : pct + '%'}</span></div>` : ''}
         <div class="doc-cover-ops">
           <button class="btn-ghost" data-action="open-doc" data-id="${d.id}" title="用外部阅读器打开">打开</button>
           <button class="btn-ghost" data-action="edit-doc" data-id="${d.id}">编辑</button>
@@ -119,6 +133,7 @@ function renderDocList () {
       <div class="doc-info">
         <div class="doc-title" data-action="open-doc" data-id="${d.id}" title="${esc(d.title)}">${esc(d.title)}</div>
         <div class="doc-tags">${
+          (hitPage ? `<span class="doc-hit" title="正文命中，点封面预览可直达第 ${hitPage} 页">全文 · 第 ${hitPage} 页</span>` : '') +
           d.tagIds.map(t => `<span class="doc-tag"># ${esc(tagName[t] || '?')}</span>`).join('')
         }</div>
         <div class="doc-meta">
@@ -189,7 +204,10 @@ document.body.addEventListener('click', async (e) => {
       }
       case 'preview-doc': {
         const doc = data.documents.find(d => d.id === id)
-        openPreview(doc)
+        // 搜索中点开的书：全文命中时直接跳到首个命中页
+        const kw = normText(filters.keyword)
+        const jump = kw ? textHit(id, kw) : 0
+        openPreview(doc, jump || null)
         break
       }
       case 'open-doc': {
@@ -280,6 +298,7 @@ catList.addEventListener('drop', async (e) => {
 
 $('#btnImport').addEventListener('click', async () => {
   const { imported, errors } = await window.solace.importDialog()
+  imported.forEach(d => ensureQueued(d.id))
   notifyImport(imported, errors)
   refresh()
 })
@@ -310,6 +329,7 @@ window.addEventListener('drop', async (e) => {
   if (!pdfs.length) return
   const paths = pdfs.map(f => window.solace.pathForFile(f))
   const { imported, errors } = await window.solace.importPaths(paths)
+  imported.forEach(d => ensureQueued(d.id))
   notifyImport(imported, errors)
   refresh()
 })
@@ -485,7 +505,14 @@ $('#btnDormant').addEventListener('click', () => { renderStats(); $('#statsDialo
 
 /* ================= 预览浮层的关闭按钮 ================= */
 
-$('#btnPreviewClose').addEventListener('click', () => window.closePreview?.())
+// 关闭后刷新列表：预览期间记下的阅读进度（进度环）要立刻反映到卡片上。
+// 先等进度落库完成再取数据，避免读写竞争拿到旧进度。
+async function closePreviewAndRefresh () {
+  await window.closePreview?.()
+  refresh()
+}
+
+$('#btnPreviewClose').addEventListener('click', closePreviewAndRefresh)
 $('#btnPreviewExternal').addEventListener('click', async () => {
   if (window.currentPreviewId) {
     await window.solace.openDoc(window.currentPreviewId)
@@ -495,7 +522,7 @@ $('#btnPreviewExternal').addEventListener('click', async () => {
 
 // 预览打开时按 Esc 关闭（对话框之外的 Esc）
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && isPreviewOpen()) window.closePreview?.()
+  if (e.key === 'Escape' && isPreviewOpen()) closePreviewAndRefresh()
 })
 
 /* ================= 工具函数 ================= */
@@ -509,6 +536,23 @@ function toast (text) {
   setTimeout(() => el.classList.add('out'), 2200)
   setTimeout(() => el.remove(), 2700)
 }
+// 供 preview.js 读毕庆祝等跨模块场景复用
+window.toast = toast
+
+/* ================= 全文索引进度提示 ================= */
+
+const indexStatus = $('#indexStatus')
+
+window.addEventListener('solace-index', (e) => {
+  const n = e.detail.pending
+  indexStatus.hidden = n === 0
+  if (n) indexStatus.textContent = `📖 全文索引中… 剩 ${n} 本`
+})
+
+// 单本索引完成即刷新列表：让搜索中的全文命中即时出现
+window.addEventListener('solace-index-doc', () => {
+  if (normText(filters.keyword)) renderDocList()
+})
 
 function esc (s) {
   return String(s).replace(/[&<>"']/g, c => ({
