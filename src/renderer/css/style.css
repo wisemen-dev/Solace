@@ -139,6 +139,8 @@ button { font-family: inherit; }
   background: rgba(8, 10, 14, 0.82); backdrop-filter: blur(6px);
   display: flex; flex-direction: column;
 }
+/* display:flex 会覆盖 hidden 属性的 UA 样式，必须显式压回，否则浮层常驻遮挡主界面 */
+.preview-overlay[hidden] { display: none; }
 .preview-head {
   display: flex; align-items: center; gap: 14px;
   padding: 12px 20px; border-bottom: 1px solid var(--line);

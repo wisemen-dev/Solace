@@ -14,6 +14,11 @@
 - 一键用系统默认阅读器打开，并记录 openedAt / openCount 阅读足迹
 - 按标题搜索，分类 / 标签筛选
 
+### 修复
+- 预览浮层在启动时即遮挡主界面：`.preview-overlay` 的 `display: flex`
+  覆盖了 `hidden` 属性的浏览器默认 `display: none`，新增
+  `.preview-overlay[hidden]` 规则显式压回（2026-09-06，首次视觉验证发现）
+
 ### 已知问题
 - 开发机 ZCode Shell 指向失效路径 `E:\Git\bin\bash.exe`（Git 实际装于
   `C:\Program Files\Git`），影响本会话内的命令执行，不影响应用本身。
