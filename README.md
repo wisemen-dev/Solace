@@ -27,6 +27,9 @@ npm install
 npm start
 ```
 
+日常使用推荐**双击项目根目录的 `start-solace.bat`** 启动；也可以在终端执行
+`npm start`。首次拿到代码需先执行一次 `npm install`。
+
 ## 目录结构
 
 ```
