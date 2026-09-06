@@ -49,13 +49,23 @@ body {
 .side-list { list-style: none; max-height: 30vh; overflow-y: auto; }
 .side-list li {
   display: flex; align-items: center; gap: 6px;
-  padding: 6px 8px; border-radius: 8px; cursor: pointer;
+  padding: 6px 8px 6px calc(8px + var(--d, 0) * 13px);
+  border-radius: 8px; cursor: pointer;
   font-size: 13px; color: var(--text);
 }
 .side-list li:hover { background: var(--card); }
 .side-list li.active { background: var(--accent-soft); color: var(--accent); }
+.side-list li.dragging { opacity: 0.45; }
 .side-list .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-list .badge { font-size: 11px; color: var(--muted); }
+/* 分类树的折叠箭头：无子分类时用同宽占位保持名字对齐 */
+.side-list .caret {
+  border: none; background: none; color: var(--muted);
+  cursor: pointer; width: 13px; flex-shrink: 0;
+  font-size: 9px; padding: 0; line-height: 1;
+}
+.side-list .caret:hover { color: var(--text); }
+.side-list .caret.placeholder { visibility: hidden; }
 .side-list .ops { display: none; gap: 2px; }
 .side-list li:hover .ops { display: inline-flex; }
 .side-list li.active:hover .ops { display: inline-flex; }
@@ -375,6 +385,25 @@ button { font-family: inherit; }
 
 /* ---------- 庆祝彩蛋 ---------- */
 .confetti-canvas { position: fixed; inset: 0; pointer-events: none; z-index: 200; }
+
+/* ---------- 命令面板（Ctrl+K） ---------- */
+.palette-dialog { width: 520px; max-width: 92vw; padding: 12px 12px 8px; }
+.palette-list {
+  list-style: none; max-height: 320px; overflow-y: auto;
+  margin-top: 8px; display: flex; flex-direction: column; gap: 2px;
+}
+.palette-list li {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+.palette-list li.active { background: var(--accent-soft); color: var(--accent); }
+.palette-list li .icon { width: 20px; text-align: center; flex-shrink: 0; }
+.palette-list li .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-list li .hint { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.palette-list .palette-empty {
+  color: var(--muted); justify-content: center; cursor: default; padding: 14px;
+}
+.palette-foot { margin-top: 8px; font-size: 11px; color: var(--muted); text-align: right; }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }

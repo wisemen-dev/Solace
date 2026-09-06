@@ -2,6 +2,7 @@ import { openPreview, isPreviewOpen } from './preview.js'
 import { ensureCover, coverCache } from './covers.js'
 import { burst } from './confetti.js'
 import { initIndex, ensureQueued, textHit } from './textindex.js'
+import './palette.js' // 命令面板：自带事件注册，引入即生效
 
 let data = null
 const filters = { categoryId: undefined, tagId: null, keyword: '' }
@@ -24,29 +25,90 @@ async function refresh () {
 function renderAll () {
   renderCategories()
   renderTags()
+  renderShelves()
   renderDocList()
   updateDormantBadge()
 }
 
-/* ================= 侧栏：分类 ================= */
+/* ================= 侧栏：分类树 ================= */
 
-function renderCategories () {
-  const counts = {}
+// 折叠状态只存内存，重启后全部展开
+const collapsedCats = new Set()
+
+// 依 parentId 组树并 DFS 展开为带层级的有序列表；折叠的节点跳过子树。
+// respectCollapse=false 供编辑对话框下拉用（要看到全部分类）。
+function orderedCategories (respectCollapse = true) {
+  const childrenOf = new Map()
+  for (const c of data.categories) {
+    const key = c.parentId || null
+    if (!childrenOf.has(key)) childrenOf.set(key, [])
+    childrenOf.get(key).push(c)
+  }
+  const out = []
+  const walk = (parentId, depth) => {
+    for (const c of childrenOf.get(parentId) || []) {
+      out.push({ cat: c, depth })
+      if (!respectCollapse || !collapsedCats.has(c.id)) walk(c.id, depth + 1)
+    }
+  }
+  walk(null, 0)
+  return out
+}
+
+// 分类自身 + 全部子孙的 id 集合：点父分类时子分类的书一并显示
+function categorySubtreeIds (id) {
+  const ids = new Set([id])
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const c of data.categories) {
+      if (c.parentId && ids.has(c.parentId) && !ids.has(c.id)) { ids.add(c.id); grew = true }
+    }
+  }
+  return ids
+}
+
+// 各分类的累计藏书数（含子孙分类）
+function categoryCounts () {
+  const direct = {}
   let uncategorized = 0
   for (const d of data.documents) {
-    if (d.categoryId) counts[d.categoryId] = (counts[d.categoryId] || 0) + 1
+    if (d.categoryId) direct[d.categoryId] = (direct[d.categoryId] || 0) + 1
     else uncategorized++
   }
+  const counts = {}
+  for (const c of data.categories) {
+    let sum = 0
+    for (const id of categorySubtreeIds(c.id)) sum += direct[id] || 0
+    counts[c.id] = sum
+  }
+  return { counts, uncategorized }
+}
 
-  const catHtml = data.categories.map(c => `
-    <li data-action="filter-cat" data-id="${c.id}" class="${filters.categoryId === c.id ? 'active' : ''}">
+function catNameOf (id) {
+  return data.categories.find(c => c.id === id)?.name || '未知'
+}
+
+function renderCategories () {
+  const { counts, uncategorized } = categoryCounts()
+
+  const catHtml = orderedCategories().map(({ cat: c, depth }) => {
+    const hasKids = data.categories.some(k => (k.parentId || null) === c.id)
+    const collapsed = collapsedCats.has(c.id)
+    return `
+    <li data-action="filter-cat" data-id="${c.id}" class="${filters.categoryId === c.id ? 'active' : ''}" style="--d:${depth}">
+      ${hasKids
+        ? `<button class="caret" data-action="toggle-cat" data-id="${c.id}" title="${collapsed ? '展开' : '折叠'}">${collapsed ? '▸' : '▾'}</button>`
+        : '<span class="caret placeholder"></span>'}
       <span class="name">${esc(c.name)}</span>
       <span class="ops">
+        <button data-action="add-subcat" data-id="${c.id}" title="添加子分类">＋</button>
         <button data-action="rename-cat" data-id="${c.id}" title="重命名">✎</button>
         <button data-action="del-cat" data-id="${c.id}" title="删除">✕</button>
       </span>
       <span class="badge">${counts[c.id] || 0}</span>
-    </li>`).join('')
+    </li>`
+  }).join('')
 
   $('#catList').innerHTML = `
     <li data-action="filter-cat" data-id="all" class="${filters.categoryId === undefined ? 'active' : ''}">
@@ -73,6 +135,56 @@ function renderTags () {
     </li>`).join('') || '<li class="side-empty" style="cursor:default;color:var(--muted);font-size:12px;">暂无标签</li>'
 }
 
+/* ================= 侧栏：智能收藏夹 ================= */
+
+// 收藏夹 = 保存的筛选组合（分类+标签+关键词）。当前筛选与它完全一致时高亮。
+function shelfActive (shelf) {
+  const f = shelf.filters || {}
+  return f.categoryId === filters.categoryId &&
+    (f.tagId || null) === filters.tagId &&
+    (f.keyword || '') === (filters.keyword || '')
+}
+
+function shelfDesc (shelf) {
+  const f = shelf.filters || {}
+  const parts = []
+  if (typeof f.categoryId === 'string') parts.push(`分类：${catNameOf(f.categoryId)}`)
+  else if (f.categoryId === null) parts.push('分类：未分类')
+  if (f.tagId) parts.push(`标签：#${data.tags.find(t => t.id === f.tagId)?.name || '?'}`)
+  if (f.keyword) parts.push(`关键词："${f.keyword}"`)
+  return parts.join(' · ') || '空筛选'
+}
+
+function renderShelves () {
+  const shelves = data.smartShelves || []
+  $('#shelfList').innerHTML = shelves.map(s => `
+    <li data-action="apply-shelf" data-id="${s.id}" class="${shelfActive(s) ? 'active' : ''}">
+      <span class="name" title="${esc(shelfDesc(s))}">⭐ ${esc(s.name)}</span>
+      <span class="ops">
+        <button data-action="rename-shelf" data-id="${s.id}" title="重命名">✎</button>
+        <button data-action="del-shelf" data-id="${s.id}" title="删除">✕</button>
+      </span>
+    </li>`).join('') || '<li class="side-empty" style="cursor:default;color:var(--muted);font-size:12px;">暂无收藏夹<br>筛选后点上方 ＋ 保存</li>'
+}
+
+function suggestedShelfName (f) {
+  const parts = []
+  if (typeof f.categoryId === 'string') parts.push(catNameOf(f.categoryId))
+  else if (f.categoryId === null) parts.push('未分类')
+  if (f.tagId) parts.push('#' + (data.tags.find(t => t.id === f.tagId)?.name || ''))
+  if (f.keyword) parts.push(`"${f.keyword}"`)
+  return parts.join(' + ')
+}
+
+function applyShelf (shelf) {
+  const f = shelf.filters || {}
+  filters.categoryId = f.categoryId === undefined ? undefined : f.categoryId
+  filters.tagId = f.tagId || null
+  filters.keyword = f.keyword || ''
+  $('#searchInput').value = filters.keyword
+  renderAll()
+}
+
 /* ================= 主区：封面墙 ================= */
 
 // 搜索与排序用的归一化：小写化并剔除全部空白（含全角空格），
@@ -81,9 +193,11 @@ const normText = (s) => String(s || '').toLowerCase().replace(/\s+/g, '')
 
 function visibleDocs () {
   const kw = normText(filters.keyword)
+  // 树状筛选：选中的是具体分类时，子孙分类的书一并显示
+  const catIds = typeof filters.categoryId === 'string' ? categorySubtreeIds(filters.categoryId) : null
   return data.documents.filter(d => {
     if (filters.categoryId === null && d.categoryId !== null) return false
-    if (typeof filters.categoryId === 'string' && d.categoryId !== filters.categoryId) return false
+    if (catIds && !catIds.has(d.categoryId)) return false
     if (filters.tagId && !d.tagIds.includes(filters.tagId)) return false
     // 三级命中：标题 / 文件名 / 全文索引
     if (kw && !normText(d.title).includes(kw) && !normText(d.fileName).includes(kw) && !textHit(d.id, kw)) return false
@@ -175,6 +289,37 @@ document.body.addEventListener('click', async (e) => {
         renderAll()
         break
       }
+      case 'toggle-cat': {
+        // 折叠/展开分类树节点（只重画侧栏，不动筛选）
+        if (collapsedCats.has(id)) collapsedCats.delete(id)
+        else collapsedCats.add(id)
+        renderCategories()
+        break
+      }
+      case 'add-subcat': {
+        const name = await askText('新建子分类')
+        if (name) { try { await window.solace.addCategory(name, id); refresh() } catch (err) { toast(err.message) } }
+        break
+      }
+      case 'apply-shelf': {
+        const shelf = (data.smartShelves || []).find(s => s.id === id)
+        if (shelf) applyShelf(shelf)
+        break
+      }
+      case 'rename-shelf': {
+        const shelf = (data.smartShelves || []).find(s => s.id === id)
+        if (!shelf) break
+        const name = await askText('重命名收藏夹', shelf.name)
+        if (name && name !== shelf.name) { await window.solace.renameShelf(id, name); refresh() }
+        break
+      }
+      case 'del-shelf': {
+        if (confirm('删除该收藏夹？只移除筛选组合，不影响藏书。')) {
+          await window.solace.removeShelf(id)
+          refresh()
+        }
+        break
+      }
       case 'filter-tag': {
         filters.tagId = filters.tagId === id ? null : id
         renderAll()
@@ -187,7 +332,7 @@ document.body.addEventListener('click', async (e) => {
         break
       }
       case 'del-cat': {
-        if (confirm('删除该分类？分类下的文档会变为未分类。')) {
+        if (confirm('删除该分类？子分类与直属文档将上移到其父分类（顶级分类的文档变为未分类）。')) {
           if (filters.categoryId === id) filters.categoryId = undefined
           await window.solace.removeCategory(id)
           refresh()
@@ -234,7 +379,7 @@ document.body.addEventListener('click', async (e) => {
   }
 })
 
-/* ================= 拖拽归档：卡片 → 侧栏分类 ================= */
+/* ================= 拖拽：卡片 → 分类归档，分类 → 分类换父 ================= */
 
 $('#docGrid').addEventListener('dragstart', (e) => {
   const card = e.target.closest('.doc-card')
@@ -249,14 +394,34 @@ document.addEventListener('dragend', () => {
   document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'))
   document.querySelectorAll('.drop-hint').forEach(el => el.classList.remove('drop-hint'))
   dragDocId = null
+  dragCatId = null
 })
 
 const catList = $('#catList')
 
-catList.addEventListener('dragover', (e) => {
-  if (!dragDocId) return
+// 拖分类到分类换父级（「全部/未分类」不可作为被拖对象）
+let dragCatId = null
+
+catList.addEventListener('dragstart', (e) => {
   const li = e.target.closest('li[data-action="filter-cat"]')
-  if (!li) return
+  if (!li || li.dataset.id === 'all' || li.dataset.id === 'none') return
+  dragCatId = li.dataset.id
+  e.dataTransfer.setData('application/x-solace-cat', dragCatId)
+  e.dataTransfer.effectAllowed = 'move'
+  li.classList.add('dragging')
+})
+
+function dropTargetOk (li, type) {
+  if (!li) return false
+  if (type === 'doc') return li.dataset.id !== 'all'
+  return li.dataset.id !== 'all' && li.dataset.id !== 'none' && li.dataset.id !== dragCatId
+}
+
+catList.addEventListener('dragover', (e) => {
+  const li = e.target.closest('li[data-action="filter-cat"]')
+  const isDoc = dragDocId && e.dataTransfer.types.includes('application/x-solace-doc')
+  const isCat = dragCatId && e.dataTransfer.types.includes('application/x-solace-cat')
+  if ((!isDoc && !isCat) || !dropTargetOk(li, isDoc ? 'doc' : 'cat')) return
   e.preventDefault()
   e.dataTransfer.dropEffect = 'move'
   li.classList.add('drop-hint')
@@ -270,6 +435,27 @@ catList.addEventListener('dragleave', (e) => {
 catList.addEventListener('drop', async (e) => {
   const li = e.target.closest('li[data-action="filter-cat"]')
   if (!li) return
+  const types = e.dataTransfer.types
+  const target = li.dataset.id // 'all' | 'none' | 分类id
+
+  // 分类换父级
+  const catId = e.dataTransfer.getData('application/x-solace-cat')
+  if (catId && !types.includes('application/x-solace-doc')) {
+    if (!dropTargetOk(li, 'cat')) return
+    e.preventDefault()
+    e.stopPropagation()
+    catList.querySelectorAll('.drop-hint').forEach(el => el.classList.remove('drop-hint'))
+    try {
+      await window.solace.moveCategory(catId, target)
+      refresh()
+      toast(`「${catNameOf(catId)}」已移动到「${catNameOf(target)}」下`)
+    } catch (err) {
+      toast(`移动失败：${err.message || err}`)
+    }
+    return
+  }
+
+  // 文档归档（原有逻辑）
   const docId = e.dataTransfer.getData('application/x-solace-doc')
   if (!docId) return
   e.preventDefault()
@@ -278,16 +464,14 @@ catList.addEventListener('drop', async (e) => {
 
   const doc = data.documents.find(d => d.id === docId)
   if (!doc) return
-  const target = li.dataset.id // 'all' | 'none' | 分类id
   if (target === 'all') { toast('拖到具体分类或「未分类」即可归档'); return }
   const categoryId = target === 'none' ? null : target
   if (doc.categoryId === categoryId) return
 
   try {
     await window.solace.updateDoc(docId, { categoryId })
-    const cat = data.categories.find(c => c.id === categoryId)
     refresh()
-    toast(`《${doc.title}》已归档到「${cat ? cat.name : '未分类'}」`)
+    toast(`《${doc.title}》已归档到「${categoryId ? catNameOf(categoryId) : '未分类'}」`)
     burst(e.clientX, e.clientY)
   } catch (err) {
     toast(`归档失败：${err.message || err}`)
@@ -316,6 +500,33 @@ $('#btnAddCat').addEventListener('click', async () => {
 $('#btnAddTag').addEventListener('click', async () => {
   const name = await askText('新建标签')
   if (name) { try { await window.solace.addTag(name); refresh() } catch (err) { toast(err.message) } }
+})
+
+$('#btnAddShelf').addEventListener('click', async () => {
+  const f = { categoryId: filters.categoryId, tagId: filters.tagId, keyword: filters.keyword }
+  if (f.categoryId === undefined && !f.tagId && !f.keyword) {
+    toast('先用分类/标签/搜索设一个筛选，再保存为收藏夹')
+    return
+  }
+  const name = await askText('保存当前筛选为收藏夹', suggestedShelfName(f))
+  if (!name) return
+  try { await window.solace.saveShelf(name, f); refresh() } catch (err) { toast(err.message) }
+})
+
+// 命令面板（palette.js）派发的筛选与动作
+window.addEventListener('solace-palette', (e) => {
+  const d = e.detail || {}
+  if (d.type === 'filter') {
+    filters.categoryId = d.categoryId === undefined ? undefined : d.categoryId
+    filters.tagId = d.tagId || null
+    filters.keyword = d.keyword || ''
+    $('#searchInput').value = filters.keyword
+    renderAll()
+  } else if (d.type === 'action') {
+    const map = { import: '#btnImport', 'new-cat': '#btnAddCat', 'new-tag': '#btnAddTag', 'save-shelf': '#btnAddShelf', stats: '#btnStats', dormant: '#btnDormant' }
+    const btn = map[d.name] && $(map[d.name])
+    if (btn) btn.click()
+  }
 })
 
 // 文件拖入导入（应用内部拖拽归档不触发导入）
@@ -348,10 +559,11 @@ let editingId = null
 function openEditDialog (doc) {
   editingId = doc.id
   $('#editTitle').value = doc.title
+  // 下拉按树的 DFS 顺序排列，缩进体现层级（不看折叠状态，始终全量）
   $('#editCat').innerHTML = `
     <option value="">未分类</option>
-    ${data.categories.map(c =>
-      `<option value="${c.id}" ${c.id === doc.categoryId ? 'selected' : ''}>${esc(c.name)}</option>`
+    ${orderedCategories(false).map(({ cat: c, depth }) =>
+      `<option value="${c.id}" ${c.id === doc.categoryId ? 'selected' : ''}>${'　'.repeat(depth)}${esc(c.name)}</option>`
     ).join('')}`
   $('#editTags').innerHTML = data.tags.map(t => `
     <label><input type="checkbox" value="${t.id}" ${doc.tagIds.includes(t.id) ? 'checked' : ''}/> # ${esc(t.name)}</label>
@@ -520,9 +732,9 @@ $('#btnPreviewExternal').addEventListener('click', async () => {
   }
 })
 
-// 预览打开时按 Esc 关闭（对话框之外的 Esc）
+// 预览打开时按 Esc 关闭（对话框之外的 Esc；有对话框开着时先关对话框）
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && isPreviewOpen()) closePreviewAndRefresh()
+  if (e.key === 'Escape' && isPreviewOpen() && !document.querySelector('dialog[open]')) closePreviewAndRefresh()
 })
 
 /* ================= 工具函数 ================= */

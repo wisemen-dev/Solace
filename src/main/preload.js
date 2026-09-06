@@ -18,13 +18,18 @@ contextBridge.exposeInMainWorld('solace', {
   // 封面
   setCover: (id, dataUrl) => ipcRenderer.invoke('cover:set', id, dataUrl),
   getCover: (id) => ipcRenderer.invoke('cover:get', id),
-  // 分类
-  addCategory: (name) => ipcRenderer.invoke('cat:add', name),
+  // 分类（parentId 构成分类树）
+  addCategory: (name, parentId) => ipcRenderer.invoke('cat:add', name, parentId),
   renameCategory: (id, name) => ipcRenderer.invoke('cat:rename', id, name),
+  moveCategory: (id, parentId) => ipcRenderer.invoke('cat:move', id, parentId),
   removeCategory: (id) => ipcRenderer.invoke('cat:remove', id),
   // 标签
   addTag: (name) => ipcRenderer.invoke('tag:add', name),
   removeTag: (id) => ipcRenderer.invoke('tag:remove', id),
+  // 智能收藏夹（保存的筛选组合）
+  saveShelf: (name, filters) => ipcRenderer.invoke('shelf:add', name, filters),
+  renameShelf: (id, name) => ipcRenderer.invoke('shelf:rename', id, name),
+  removeShelf: (id) => ipcRenderer.invoke('shelf:remove', id),
   // 拖拽文件落盘路径（Electron 渲染进程 File 对象不带 path，需经 webUtils 转换）
   pathForFile: (file) => webUtils.getPathForFile(file)
 })

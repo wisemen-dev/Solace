@@ -77,12 +77,17 @@ function registerIpc () {
   ipcMain.handle('textindex:get', () => library.getTextIndex())
   ipcMain.handle('textindex:set', (_e, id, payload) => library.setTextIndex(id, payload))
 
-  ipcMain.handle('cat:add', (_e, name) => library.addCategory(name))
+  ipcMain.handle('cat:add', (_e, name, parentId) => library.addCategory(name, parentId))
   ipcMain.handle('cat:rename', (_e, id, name) => library.renameCategory(id, name))
+  ipcMain.handle('cat:move', (_e, id, parentId) => library.moveCategory(id, parentId))
   ipcMain.handle('cat:remove', (_e, id) => library.removeCategory(id))
 
   ipcMain.handle('tag:add', (_e, name) => library.addTag(name))
   ipcMain.handle('tag:remove', (_e, id) => library.removeTag(id))
+
+  ipcMain.handle('shelf:add', (_e, name, filters) => library.addSmartShelf(name, filters))
+  ipcMain.handle('shelf:rename', (_e, id, name) => library.renameSmartShelf(id, name))
+  ipcMain.handle('shelf:remove', (_e, id) => library.removeSmartShelf(id))
 }
 
 async function importPaths (paths) {

@@ -24,15 +24,18 @@ function init (userDataDir) {
     data = {
       version: 1,
       createdAt: new Date().toISOString(),
-      categories: [], // { id, name, parentId: null }
+      categories: [], // { id, name, parentId: null }，parentId 构成分类树
       tags: [],       // { id, name }
       documents: [],  // 见 importPdf()
-      history: []     // 打开事件 { docId, at }，足迹面板用
+      history: [],    // 打开事件 { docId, at }，足迹面板用
+      smartShelves: [] // 智能收藏夹 { id, name, filters: { categoryId?, tagId?, keyword? } }
     }
     save()
   }
   // 0.2.0 及之前建的库没有 history 字段，补齐
   if (!Array.isArray(data.history)) data.history = []
+  // 0.5.0 及之前建的库没有智能收藏夹，补齐
+  if (!Array.isArray(data.smartShelves)) data.smartShelves = []
   // 全文索引存独立文件，避免撑大 library.json；顺带清掉指向已删除文档的残留
   if (fs.existsSync(textIndexFile)) {
     textIndex = JSON.parse(fs.readFileSync(textIndexFile, 'utf8'))
@@ -182,12 +185,33 @@ function getCoverDataUrl (id) {
   return `data:image/jpeg;base64,${fs.readFileSync(file).toString('base64')}`
 }
 
-function addCategory (name) {
+function addCategory (name, parentId = null) {
   const trimmed = String(name || '').trim()
   if (!trimmed) throw new Error('分类名不能为空')
+  if (parentId != null && !data.categories.some(c => c.id === parentId)) throw new Error('父分类不存在')
   if (data.categories.some(c => c.name === trimmed)) throw new Error(`分类已存在: ${trimmed}`)
-  const cat = { id: crypto.randomUUID(), name: trimmed, parentId: null }
+  const cat = { id: crypto.randomUUID(), name: trimmed, parentId: parentId || null }
   data.categories.push(cat)
+  save()
+  return cat
+}
+
+// 拖拽换父：parentId 为 null 表示移到顶级。沿父链向上检查，禁止移到自己子孙下面成环
+function moveCategory (id, parentId) {
+  const cat = data.categories.find(c => c.id === id)
+  if (!cat) throw new Error(`分类不存在: ${id}`)
+  const target = parentId || null
+  if (target === id) throw new Error('不能移动到自身')
+  if (target != null) {
+    let cursor = data.categories.find(c => c.id === target)
+    if (!cursor) throw new Error('目标分类不存在')
+    while (cursor) {
+      if (cursor.id === id) throw new Error('不能移动到自己的子分类下')
+      cursor = data.categories.find(c => c.id === cursor.parentId) || null
+    }
+  }
+  if (cat.parentId === target) return cat
+  cat.parentId = target
   save()
   return cat
 }
@@ -204,7 +228,12 @@ function renameCategory (id, name) {
 }
 
 function removeCategory (id) {
-  data.documents.forEach(d => { if (d.categoryId === id) d.categoryId = null })
+  const cat = data.categories.find(c => c.id === id)
+  if (!cat) throw new Error(`分类不存在: ${id}`)
+  // 子分类与直属文档一并上移到被删分类的父级（顶级分类则文档变未分类），组织结构不散架
+  const parentId = cat.parentId || null
+  data.categories.forEach(c => { if (c.parentId === id) c.parentId = parentId })
+  data.documents.forEach(d => { if (d.categoryId === id) d.categoryId = parentId })
   data.categories = data.categories.filter(c => c.id !== id)
   save()
   return true
@@ -228,6 +257,42 @@ function removeTag (id) {
   return true
 }
 
+// ---- 智能收藏夹 ----
+// 保存「分类 + 标签 + 关键词」筛选组合为虚拟书架：只存查询条件不复制文档，
+// categoryId=null 表示「未分类」，缺省键表示「全部」（undefined 无法过 JSON）。
+
+function addSmartShelf (name, filters) {
+  const trimmed = String(name || '').trim()
+  if (!trimmed) throw new Error('收藏夹名称不能为空')
+  if (data.smartShelves.some(s => s.name === trimmed)) throw new Error(`收藏夹已存在: ${trimmed}`)
+  const clean = {}
+  if (filters && filters.categoryId !== undefined) clean.categoryId = filters.categoryId
+  if (filters && filters.tagId) clean.tagId = filters.tagId
+  if (filters && filters.keyword) clean.keyword = filters.keyword
+  if (!Object.keys(clean).length) throw new Error('当前没有可保存的筛选条件')
+  const shelf = { id: crypto.randomUUID(), name: trimmed, filters: clean }
+  data.smartShelves.push(shelf)
+  save()
+  return shelf
+}
+
+function renameSmartShelf (id, name) {
+  const shelf = data.smartShelves.find(s => s.id === id)
+  if (!shelf) throw new Error(`收藏夹不存在: ${id}`)
+  const trimmed = String(name || '').trim()
+  if (!trimmed) throw new Error('收藏夹名称不能为空')
+  if (data.smartShelves.some(s => s.id !== id && s.name === trimmed)) throw new Error(`收藏夹已存在: ${trimmed}`)
+  shelf.name = trimmed
+  save()
+  return shelf
+}
+
+function removeSmartShelf (id) {
+  data.smartShelves = data.smartShelves.filter(s => s.id !== id)
+  save()
+  return true
+}
+
 module.exports = {
   init,
   getData,
@@ -244,7 +309,11 @@ module.exports = {
   setTextIndex,
   addCategory,
   renameCategory,
+  moveCategory,
   removeCategory,
   addTag,
-  removeTag
+  removeTag,
+  addSmartShelf,
+  renameSmartShelf,
+  removeSmartShelf
 }

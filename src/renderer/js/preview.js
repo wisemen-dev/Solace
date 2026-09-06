@@ -206,9 +206,10 @@ function stepPage (delta) {
   scheduleProgress()
 }
 
-// 预览内键盘翻页
+// 预览内键盘翻页（有对话框开着时让位给对话框，比如命令面板里的输入）
 window.addEventListener('keydown', (e) => {
   if (!isPreviewOpen()) return
+  if (document.querySelector('dialog[open]')) return
   if (e.key === 'ArrowLeft') stepPage(-1)
   if (e.key === 'ArrowRight') stepPage(1)
 })

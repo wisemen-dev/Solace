@@ -33,12 +33,21 @@
         <ul id="tagList" class="side-list"></ul>
       </nav>
 
+      <nav class="side-section">
+        <div class="side-head">
+          <span>收藏夹</span>
+          <button id="btnAddShelf" class="btn-ghost" title="把当前筛选保存为收藏夹">＋</button>
+        </div>
+        <ul id="shelfList" class="side-list"></ul>
+      </nav>
+
       <div class="side-foot">本地资料库 · 数据不出你的电脑</div>
     </aside>
 
     <main class="main">
       <header class="topbar">
         <input id="searchInput" class="search" type="search" placeholder="搜索标题或全文…" />
+        <button id="btnPalette" class="btn-ghost" title="命令面板（Ctrl+K）">⌘K</button>
         <span id="countText" class="count"></span>
         <span id="indexStatus" class="index-status" hidden></span>
         <button id="btnDormant" class="btn-ghost dormant-badge" hidden title="">🌙 <span id="dormantCount">0</span></button>
@@ -112,6 +121,13 @@
       <h4>沉睡提醒 <span class="stats-sub">超过 30 天未读</span></h4>
       <ul id="statsDormant" class="stats-list"></ul>
     </div>
+  </dialog>
+
+  <!-- 命令面板（Ctrl+K） -->
+  <dialog id="paletteDialog" class="dialog palette-dialog">
+    <input id="paletteInput" class="field-input" type="text" placeholder="搜书、跳分类、执行动作…" />
+    <ul id="paletteList" class="palette-list"></ul>
+    <div class="palette-foot">↑↓ 选择 · Enter 确认 · Esc 关闭</div>
   </dialog>
 
   <div id="toastBox" class="toast-box"></div>
