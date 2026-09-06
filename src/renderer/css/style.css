@@ -524,6 +524,76 @@ body.opening .side-foot { animation: fade-in 0.6s 0.55s ease backwards; }
 }
 @keyframes fade-in { from { opacity: 0; } }
 
+/* ---------- 书架视图（分类书堆总览，参考 Lumin PileCard） ----------
+   每个分类叠成一摞书：底部书露左下、中层错开露右、顶书端正，
+   微旋 1~2°；越靠上越亮，阴影只画顶书；悬停整摞向外抬升。 */
+.doc-grid.shelf-mode {
+  grid-template-columns: repeat(auto-fill, 252px);
+  gap: 26px;
+}
+.pile-card { border: none; background: none; border-radius: 14px; }
+.pile-card:hover { background: none; transform: none; box-shadow: none; }
+.pile-stack {
+  position: relative;
+  height: 300px;
+  transition: transform 0.17s cubic-bezier(0.33, 1, 0.68, 1);
+}
+.pile-card:hover .pile-stack { transform: translateY(-6px); }
+.pile-book {
+  position: absolute; left: 50%; top: 12px;
+  width: calc(172px * var(--sc, 1));
+  height: calc(258px * var(--sc, 1));
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  object-fit: cover;
+  background: var(--img-bg);
+  transform: translate(calc(-50% + var(--dx, 0px)), var(--dy, 0px)) rotate(var(--rot, 0deg)) scale(var(--sc, 1));
+  filter: brightness(var(--br, 1));
+}
+.pile-book.top {
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.22), 0 5px 16px rgba(0, 0, 0, 0.15);
+  transition: box-shadow 0.17s cubic-bezier(0.33, 1, 0.68, 1);
+}
+.pile-card:hover .pile-book.top {
+  box-shadow: 0 4px 11px rgba(0, 0, 0, 0.3), 0 9px 24px rgba(0, 0, 0, 0.22);
+}
+.pile-empty {
+  position: absolute; left: 50%; top: 12px;
+  width: 172px; height: 258px;
+  transform: translateX(-50%);
+  border: 2px dashed var(--line); border-radius: 10px;
+  display: flex; flex-direction: column; gap: 8px;
+  align-items: center; justify-content: center;
+  color: var(--muted); font-size: 30px; opacity: 0.8;
+}
+.pile-empty span { font-size: 12px; letter-spacing: 1px; }
+.pile-caption { display: flex; align-items: center; gap: 8px; padding: 2px 4px 0; }
+.pile-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.pile-name {
+  flex: 1; font-size: 13px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pile-badge {
+  font-size: 11px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 11px;
+  padding: 2px 9px; flex-shrink: 0;
+  background: var(--card);
+}
+/* 「＋新建分类」虚线卡 */
+.pile-new {
+  height: 356px;
+  border: 2px dashed var(--line); border-radius: 14px;
+  background: none; color: var(--muted);
+  font-size: 26px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 6px;
+  align-items: center; justify-content: center;
+  transition: border-color 0.15s, color 0.15s;
+  animation: card-in 0.4s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+  animation-delay: calc(min(var(--i, 0), 12) * 35ms);
+}
+.pile-new span { font-size: 13px; letter-spacing: 2px; }
+.pile-new:hover { border-color: var(--accent); color: var(--accent); }
+
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }

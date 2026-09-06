@@ -194,11 +194,16 @@ function applyShelf (shelf) {
   renderAll()
 }
 
-/* ================= 主区：封面墙 ================= */
+/* ================= 主区：陈列视图 =================
+   grid 封面墙 / spine 书脊 / shelf 书架（分类书堆总览，参考 Lumin） */
 
 // 搜索与排序用的归一化：小写化并剔除全部空白（含全角空格），
 // 使「rust程序」能命中标题为「Rust 程序设计语言」这类中英混排带空格的书名
 const normText = (s) => String(s || '').toLowerCase().replace(/\s+/g, '')
+
+// 分类分布图表与书架书堆共用的调色板（按顶级分类顺序循环取色）
+const PALETTE = ['#6ea8fe', '#7bd88f', '#ffd166', '#ef8354', '#c792ea', '#4dd0e1', '#f06292', '#aed581', '#ffb74d']
+const MISC_COLOR = '#5b6672'
 
 function visibleDocs () {
   const kw = normText(filters.keyword)
@@ -219,13 +224,18 @@ function renderDocList () {
   const catName = Object.fromEntries(data.categories.map(c => [c.id, c.name]))
   const tagName = Object.fromEntries(data.tags.map(t => [t.id, t.name]))
   const cache = coverCache()
-  const spine = prefs.viewMode === 'spine'
+  const nkw = normText(filters.keyword)
 
   $('#countText').textContent = `共 ${data.documents.length} 本 · 显示 ${docs.length} 本`
-  $('#docGrid').classList.toggle('spine-mode', spine)
+
+  const grid = $('#docGrid')
+  // 书架（分类书堆总览）：无搜索词时生效；一搜索就回退封面墙显示结果
+  const shelf = prefs.viewMode === 'shelf' && !nkw
+  grid.classList.toggle('spine-mode', prefs.viewMode === 'spine' && !shelf)
+  grid.classList.toggle('shelf-mode', shelf)
 
   if (!docs.length) {
-    $('#docGrid').innerHTML = `<div class="empty">${
+    grid.innerHTML = `<div class="empty">${
       data.documents.length
         ? '没有符合条件的结果<br>试试调整分类、标签或搜索词'
         : '图书馆还是空的<br>把 PDF 拖进窗口，或点击左侧「导入 PDF」'
@@ -233,7 +243,10 @@ function renderDocList () {
     return
   }
 
-  const nkw = normText(filters.keyword)
+  if (shelf) {
+    renderPileShelf()
+    return
+  }
 
   $('#docGrid').innerHTML = docs.map((d, i) => {
     const cached = cache.get(d.id)
@@ -291,18 +304,30 @@ function renderDocList () {
 
 /* ================= 顶栏：视图与主题切换 ================= */
 
+// 视图循环：封面墙 → 书脊 → 书架（分类书堆总览）→ 封面墙
+const VIEW_ORDER = ['grid', 'spine', 'shelf']
+const VIEW_LABEL = { grid: '📚 封面', spine: '📖 书脊', shelf: '🏛 书架' }
+const VIEW_TITLE = { grid: '切换到书脊视图', spine: '切换到书架（分类书堆）', shelf: '切换到封面墙' }
+
 function syncViewButton () {
-  const spine = prefs.viewMode === 'spine'
   const btn = $('#btnView')
-  btn.textContent = spine ? '📖 书脊' : '📚 封面'
-  btn.title = spine ? '切换到封面墙' : '切换到书脊视图'
+  btn.textContent = VIEW_LABEL[prefs.viewMode] || VIEW_LABEL.grid
+  btn.title = VIEW_TITLE[prefs.viewMode] || ''
 }
 
 $('#btnView').addEventListener('click', async () => {
-  prefs.viewMode = prefs.viewMode === 'spine' ? 'grid' : 'spine'
+  const next = VIEW_ORDER[(VIEW_ORDER.indexOf(prefs.viewMode) + 1) % VIEW_ORDER.length]
+  prefs.viewMode = next
+  if (next === 'shelf') {
+    // 书架是分类总览：进来时清空筛选，与 Lumin「返回书架退出搜索态」一致
+    filters.categoryId = undefined
+    filters.tagId = null
+    filters.keyword = ''
+    $('#searchInput').value = ''
+  }
   syncViewButton()
-  renderDocList()
-  try { await window.solace.updateSettings({ viewMode: prefs.viewMode }) } catch { /* 保存失败不影响本次切换 */ }
+  renderAll()
+  try { await window.solace.updateSettings({ viewMode: next }) } catch { /* 保存失败不影响本次切换 */ }
 })
 
 $('#btnTheme').addEventListener('click', async () => {
@@ -322,6 +347,109 @@ const coverObserver = new IntersectionObserver((entries) => {
   }
 }, { root: document.getElementById('docGrid'), rootMargin: '120px' })
 
+/* ================= 书架视图：分类书堆总览 =================
+   参考自 Lumin 的书堆书架：每个分类叠成一摞真实感的书（最多 4 本，
+   顶部是最新入库的一本），点击书堆进入该分类的封面墙。
+   堆叠位沿用其 _stack_for 设计：底书露左下、中层错开露右、顶书端正，
+   微旋 1~2°；越靠上的书越亮，阴影只画在最顶一本。 */
+
+// 堆叠位（从底到顶）：[dx, dy, rot(°), scale]，封面基准 172×258
+const PILE_STACKS = {
+  1: [[0, 0, 0, 1]],
+  2: [[22, 22, 2.2, 0.94], [0, 0, 0, 1]],
+  3: [[-24, 24, -2.2, 0.94], [22, 6, 2.2, 0.97], [0, 0, 0, 1]],
+  4: [[-25, 27, -2.2, 0.94], [25, 4, 2.2, 0.96], [8, 2, -1.2, 0.98], [0, 0, 0, 1]]
+}
+
+function renderPileShelf () {
+  const topCats = data.categories.filter(c => !c.parentId)
+  const counts = categoryCounts()
+  const piles = topCats.map((c, i) => ({
+    key: c.id,
+    name: c.name,
+    color: PALETTE[i % PALETTE.length],
+    count: counts.counts[c.id] || 0,
+    books: docsInCategory(c.id).slice(0, 4)
+  }))
+  const uncat = data.documents.filter(d => !d.categoryId)
+  if (uncat.length) {
+    piles.push({
+      key: 'none',
+      name: '未分类',
+      color: MISC_COLOR,
+      count: uncat.length,
+      books: uncat.slice(0, 4)
+    })
+  }
+
+  $('#countText').textContent = `共 ${data.documents.length} 本 · ${piles.length} 摞书堆`
+
+  const grid = $('#docGrid')
+  if (!data.documents.length && !piles.length) {
+    grid.innerHTML = '<div class="empty">图书馆还是空的<br>把 PDF 拖进窗口，或点击左侧「导入 PDF」</div>'
+    return
+  }
+
+  grid.innerHTML = piles.map((p, i) => {
+    const stack = p.books.length
+      ? pileStackHtml(p.books)
+      : '<div class="pile-empty">❉<span>空书堆</span></div>'
+    return `
+    <div class="doc-card pile-card" data-action="pile-open" data-id="${p.key}" style="--i:${i}"
+         title="打开「${esc(p.name)}」书堆">
+      <div class="pile-stack">${stack}</div>
+      <div class="pile-caption">
+        <span class="pile-dot" style="background:${p.color}"></span>
+        <span class="pile-name">${esc(p.name)}</span>
+        <span class="pile-badge">${p.count} 本</span>
+      </div>
+    </div>`
+  }).join('') + `
+    <button class="pile-new" data-action="pile-newcat" style="--i:${piles.length}">
+      ＋<span>新建分类</span>
+    </button>`
+
+  // 封面懒加载：书堆 img 复用 doc-cover-img 管线（缓存/生成/回填）
+  for (const img of grid.querySelectorAll('.doc-cover-img:not([src])')) {
+    const doc = data.documents.find(x => x.id === img.dataset.docId)
+    if (doc) coverObserver.observe(img)
+  }
+}
+
+function pileStackHtml (books) {
+  const n = books.length
+  const slots = PILE_STACKS[Math.min(n, 4)]
+  // 底→顶叠放：旧的在下，最新的在最顶
+  const ordered = [...books].reverse()
+  return ordered.map((d, slot) => {
+    const [dx, dy, rot, sc] = slots[slot]
+    const depth = n > 1 ? slot / (n - 1) : 1 // 越靠上越亮
+    const br = (1 - 0.22 * (1 - depth)).toFixed(2)
+    return `
+    <img class="doc-cover-img pile-book${slot === n - 1 ? ' top' : ''}" data-doc-id="${d.id}" alt=""
+         style="--dx:${dx}px; --dy:${dy}px; --rot:${rot}deg; --sc:${sc}; --br:${br}"
+         title="${esc(d.title)}"/>`
+  }).join('')
+}
+
+// 分类子树内的书，最新入库的在前（书堆顶部 = 最新一本）
+function docsInCategory (catId) {
+  const ids = categorySubtreeIds(catId)
+  return data.documents
+    .filter(d => d.categoryId && ids.has(d.categoryId))
+    .sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt))
+}
+
+// 点书堆 → 应用分类筛选并切到封面墙（对应 Lumin「点堆进入网格」）
+async function openPile (key) {
+  filters.categoryId = key === 'none' ? null : key
+  prefs.viewMode = 'grid'
+  syncViewButton()
+  renderAll()
+  try { await window.solace.updateSettings({ viewMode: 'grid' }) } catch { /* 下次启动仍为书架也可接受 */ }
+  $('#docGrid').scrollTo({ top: 0 })
+}
+
 /* ================= 事件：全局委托 ================= */
 
 document.body.addEventListener('click', async (e) => {
@@ -333,7 +461,22 @@ document.body.addEventListener('click', async (e) => {
     switch (action) {
       case 'filter-cat': {
         filters.categoryId = id === 'all' ? undefined : id === 'none' ? null : id
+        // 书架总览不显示单本书：点了分类就切到封面墙看书
+        if (prefs.viewMode === 'shelf') {
+          prefs.viewMode = 'grid'
+          syncViewButton()
+          window.solace.updateSettings({ viewMode: 'grid' }).catch(() => {})
+        }
         renderAll()
+        break
+      }
+      case 'pile-open': {
+        await openPile(id)
+        break
+      }
+      case 'pile-newcat': {
+        const name = await askText('新建分类')
+        if (name) { try { await window.solace.addCategory(name); refresh() } catch (err) { toast(err.message) } }
         break
       }
       case 'toggle-cat': {
@@ -666,10 +809,6 @@ function updateDormantBadge () {
   $('#dormantCount').textContent = n
   btn.title = `${n} 本书已沉睡超过 ${DORMANT_DAYS} 天`
 }
-
-// 分类分布图表用的调色板（按分类顺序循环取色）
-const PALETTE = ['#6ea8fe', '#7bd88f', '#ffd166', '#ef8354', '#c792ea', '#4dd0e1', '#f06292', '#aed581', '#ffb74d']
-const MISC_COLOR = '#5b6672'
 
 function renderCategoryChart () {
   const chart = $('#statsChart')
