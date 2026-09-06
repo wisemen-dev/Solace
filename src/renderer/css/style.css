@@ -1,4 +1,7 @@
-:root {
+/* ---------- 主题 ----------
+   三套配色由 <html data-theme> 切换（theme-boot.js 首帧设置，theme.js 维护）：
+   墨水 ink（默认暗色）/ 纸张 paper（暖白米色）/ 黄昏 dusk（琥珀暗色） */
+:root, [data-theme='ink'] {
   --bg: #101418;
   --panel: #151b22;
   --card: #1b232d;
@@ -9,6 +12,53 @@
   --accent: #6ea8fe;
   --accent-soft: rgba(110, 168, 254, 0.14);
   --danger: #e5734f;
+  --warn: #e5b567;
+  --btn-primary-text: #0d1117;
+  --cover-grad: linear-gradient(160deg, #232c3a 0%, #1a2230 100%);
+  --cover-mark: rgba(110, 168, 254, 0.16);
+  --overlay-bg: rgba(8, 10, 14, 0.82);
+  --img-bg: #f5f6f8;
+  --scrollbar-hover: #334052;
+}
+
+[data-theme='paper'] {
+  --bg: #f3eee3;
+  --panel: #ebe4d4;
+  --card: #faf6ec;
+  --card-hover: #fffdf5;
+  --line: #d9cfb8;
+  --text: #40372a;
+  --muted: #8b7d64;
+  --accent: #a9682f;
+  --accent-soft: rgba(169, 104, 47, 0.13);
+  --danger: #b04a2a;
+  --warn: #9c6a10;
+  --btn-primary-text: #fff8ef;
+  --cover-grad: linear-gradient(160deg, #e9e1cf 0%, #ddd2b9 100%);
+  --cover-mark: rgba(169, 104, 47, 0.2);
+  --overlay-bg: rgba(64, 55, 42, 0.5);
+  --img-bg: #ffffff;
+  --scrollbar-hover: #c9bda1;
+}
+
+[data-theme='dusk'] {
+  --bg: #201a12;
+  --panel: #292118;
+  --card: #322a1e;
+  --card-hover: #3c3224;
+  --line: #4a3d2a;
+  --text: #f2e8d8;
+  --muted: #ab9a7d;
+  --accent: #e8a04c;
+  --accent-soft: rgba(232, 160, 76, 0.16);
+  --danger: #e5734f;
+  --warn: #e5b567;
+  --btn-primary-text: #241a0d;
+  --cover-grad: linear-gradient(160deg, #3b3122 0%, #2c2418 100%);
+  --cover-mark: rgba(232, 160, 76, 0.2);
+  --overlay-bg: rgba(14, 10, 4, 0.82);
+  --img-bg: #f8f4ec;
+  --scrollbar-hover: #5a4a30;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -139,7 +189,7 @@ body {
 .doc-cover {
   position: relative;
   aspect-ratio: 210 / 297;
-  background: linear-gradient(160deg, #232c3a 0%, #1a2230 100%);
+  background: var(--cover-grad);
   cursor: pointer;
   overflow: hidden;
 }
@@ -147,13 +197,13 @@ body {
   content: '❉';
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 36px; color: rgba(110, 168, 254, 0.16);
+  font-size: 36px; color: var(--cover-mark);
 }
 .doc-cover-img {
   position: relative; z-index: 1;
   width: 100%; height: 100%;
   object-fit: cover; display: block;
-  background: #f5f6f8;
+  background: var(--img-bg);
 }
 .doc-cover-ops {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
@@ -180,7 +230,7 @@ body {
 }
 /* 全文命中标记：搜索词只在正文出现时提示首个命中页 */
 .doc-hit {
-  font-size: 10.5px; background: rgba(229, 181, 103, 0.16); color: #e5b567;
+  font-size: 10.5px; background: var(--accent-soft); color: var(--warn);
   border-radius: 999px; padding: 1px 8px; cursor: pointer;
 }
 
@@ -208,7 +258,7 @@ body {
 /* ---------- 按钮 ---------- */
 button { font-family: inherit; }
 .btn-primary {
-  background: var(--accent); color: #0d1117; border: none;
+  background: var(--accent); color: var(--btn-primary-text); border: none;
   border-radius: 10px; padding: 9px 14px; font-size: 13px;
   font-weight: 600; cursor: pointer; transition: filter 0.15s;
 }
@@ -224,7 +274,7 @@ button { font-family: inherit; }
 /* ---------- 预览 ---------- */
 .preview-overlay {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(8, 10, 14, 0.82); backdrop-filter: blur(6px);
+  background: var(--overlay-bg); backdrop-filter: blur(6px);
   display: flex; flex-direction: column;
 }
 /* display:flex 会覆盖 hidden 属性的 UA 样式，必须显式压回，否则浮层常驻遮挡主界面 */
@@ -377,11 +427,11 @@ button { font-family: inherit; }
 }
 .stats-list .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stats-list .when { color: var(--muted); font-size: 12px; }
-.stats-list .reason { color: #e5b567; font-size: 12px; }
+.stats-list .reason { color: var(--warn); font-size: 12px; }
 .stats-list .empty-line { color: var(--muted); justify-content: center; padding: 12px; }
 
-.dormant-badge { color: #e5b567; border-color: rgba(229, 181, 103, 0.45); }
-.dormant-badge:hover { color: #e5b567; border-color: #e5b567; }
+.dormant-badge { color: var(--warn); border-color: var(--warn); opacity: 0.85; }
+.dormant-badge:hover { color: var(--warn); border-color: var(--warn); opacity: 1; }
 
 /* ---------- 庆祝彩蛋 ---------- */
 .confetti-canvas { position: fixed; inset: 0; pointer-events: none; z-index: 200; }
@@ -405,6 +455,75 @@ button { font-family: inherit; }
 }
 .palette-foot { margin-top: 8px; font-size: 11px; color: var(--muted); text-align: right; }
 
+/* ---------- 书脊模式（视图切换） ----------
+   第二种陈列：卡片变成一排立在架上的书。封面做底、书名竖排，
+   悬停时书往外抽出，读览进度变成书脊底部的细进度条。 */
+.doc-grid.spine-mode {
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 12px;
+}
+.spine-mode .doc-card {
+  border-radius: 7px;
+}
+.spine-mode .doc-cover {
+  aspect-ratio: auto;
+  height: 200px;
+  transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.3, 1), box-shadow 0.22s;
+}
+/* 悬停抽书：整根书脊向外抽出 + 深投影 */
+.spine-mode .doc-card:hover .doc-cover {
+  transform: translateY(-8px);
+  box-shadow: 0 16px 26px rgba(0, 0, 0, 0.45);
+}
+.spine-mode .doc-card:hover { transform: none; box-shadow: none; }
+.spine-mode .doc-cover::before { content: none; }
+/* 封面图整体压暗做书脊底色，书名才可读 */
+.spine-mode .doc-cover-img { filter: brightness(0.8) saturate(0.92); }
+/* 书脊顶/底装饰亮线 + 中缝暗线，模拟装订 */
+.spine-mode .doc-cover::after {
+  content: '';
+  position: absolute; top: 0; bottom: 0; left: 5px; width: 1px; z-index: 2;
+  background: linear-gradient(rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0.25));
+  pointer-events: none;
+}
+.spine-name {
+  position: absolute; inset: 0; z-index: 3;
+  writing-mode: vertical-rl;
+  display: flex; align-items: center; justify-content: center;
+  padding: 12px 0;
+  color: #fff; font-size: 12.5px; font-weight: 600; letter-spacing: 2px;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.85);
+  white-space: nowrap; overflow: hidden;
+  pointer-events: none;
+}
+/* 底部细进度条（书脊模式代替进度环） */
+.spine-progress {
+  position: absolute; left: 7px; right: 7px; bottom: 7px; z-index: 3;
+  height: 3px; border-radius: 2px;
+  background: rgba(255, 255, 255, 0.32);
+  pointer-events: none;
+}
+.spine-progress::after {
+  content: '';
+  display: block; width: calc(var(--p) * 1%); height: 100%;
+  border-radius: 2px; background: var(--accent);
+}
+.spine-progress.done::after { background: #7bd88f; }
+
+/* ---------- 开馆动画（仅首次加载） ----------
+   body.opening 由 index.html 初始携带，app.js 约 1.6s 后移除；
+   之后筛选/渲染都不会重播这些入场。 */
+body.opening .sidebar { animation: rise-in 0.5s ease backwards; }
+body.opening .topbar { animation: rise-in 0.5s 0.1s ease backwards; }
+body.opening .side-section:nth-of-type(1) { animation: rise-in 0.45s 0.2s ease backwards; }
+body.opening .side-section:nth-of-type(2) { animation: rise-in 0.45s 0.3s ease backwards; }
+body.opening .side-section:nth-of-type(3) { animation: rise-in 0.45s 0.4s ease backwards; }
+body.opening .side-foot { animation: fade-in 0.6s 0.55s ease backwards; }
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(10px); }
+}
+@keyframes fade-in { from { opacity: 0; } }
+
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
-::-webkit-scrollbar-thumb:hover { background: #334052; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }

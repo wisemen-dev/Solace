@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('solace', {
   saveShelf: (name, filters) => ipcRenderer.invoke('shelf:add', name, filters),
   renameShelf: (id, name) => ipcRenderer.invoke('shelf:rename', id, name),
   removeShelf: (id) => ipcRenderer.invoke('shelf:remove', id),
+  // 设置（主题 / 视图模式）
+  updateSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
   // 拖拽文件落盘路径（Electron 渲染进程 File 对象不带 path，需经 webUtils 转换）
   pathForFile: (file) => webUtils.getPathForFile(file)
 })

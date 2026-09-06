@@ -5,9 +5,10 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
   <title>Solace</title>
+  <script src="js/theme-boot.js"></script>
   <link rel="stylesheet" href="css/style.css" />
 </head>
-<body>
+<body class="opening">
   <div class="layout">
     <aside class="sidebar">
       <div class="brand">
@@ -48,6 +49,8 @@
       <header class="topbar">
         <input id="searchInput" class="search" type="search" placeholder="搜索标题或全文…" />
         <button id="btnPalette" class="btn-ghost" title="命令面板（Ctrl+K）">⌘K</button>
+        <button id="btnView" class="btn-ghost" title="切换陈列视图">📚 封面</button>
+        <button id="btnTheme" class="btn-ghost" title="主题">🌓</button>
         <span id="countText" class="count"></span>
         <span id="indexStatus" class="index-status" hidden></span>
         <button id="btnDormant" class="btn-ghost dormant-badge" hidden title="">🌙 <span id="dormantCount">0</span></button>

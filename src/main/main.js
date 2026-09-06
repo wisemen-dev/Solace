@@ -88,6 +88,8 @@ function registerIpc () {
   ipcMain.handle('shelf:add', (_e, name, filters) => library.addSmartShelf(name, filters))
   ipcMain.handle('shelf:rename', (_e, id, name) => library.renameSmartShelf(id, name))
   ipcMain.handle('shelf:remove', (_e, id) => library.removeSmartShelf(id))
+
+  ipcMain.handle('settings:set', (_e, patch) => library.updateSettings(patch))
 }
 
 async function importPaths (paths) {

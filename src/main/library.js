@@ -28,7 +28,8 @@ function init (userDataDir) {
       tags: [],       // { id, name }
       documents: [],  // 见 importPdf()
       history: [],    // 打开事件 { docId, at }，足迹面板用
-      smartShelves: [] // 智能收藏夹 { id, name, filters: { categoryId?, tagId?, keyword? } }
+      smartShelves: [], // 智能收藏夹 { id, name, filters: { categoryId?, tagId?, keyword? } }
+      settings: { theme: 'auto', viewMode: 'grid' } // 主题与视图偏好
     }
     save()
   }
@@ -36,6 +37,8 @@ function init (userDataDir) {
   if (!Array.isArray(data.history)) data.history = []
   // 0.5.0 及之前建的库没有智能收藏夹，补齐
   if (!Array.isArray(data.smartShelves)) data.smartShelves = []
+  // 0.6.0 及之前建的库没有设置项，补齐默认值
+  if (!data.settings) data.settings = { theme: 'auto', viewMode: 'grid' }
   // 全文索引存独立文件，避免撑大 library.json；顺带清掉指向已删除文档的残留
   if (fs.existsSync(textIndexFile)) {
     textIndex = JSON.parse(fs.readFileSync(textIndexFile, 'utf8'))
@@ -293,6 +296,17 @@ function removeSmartShelf (id) {
   return true
 }
 
+// ---- 设置 ----
+// 主题、视图模式等界面偏好。只放行白名单字段，避免渲染进程写入任意键。
+function updateSettings (patch) {
+  if (!data.settings) data.settings = {}
+  for (const key of ['theme', 'viewMode']) {
+    if (key in patch) data.settings[key] = patch[key]
+  }
+  save()
+  return data.settings
+}
+
 module.exports = {
   init,
   getData,
@@ -315,5 +329,6 @@ module.exports = {
   removeTag,
   addSmartShelf,
   renameSmartShelf,
-  removeSmartShelf
+  removeSmartShelf,
+  updateSettings
 }

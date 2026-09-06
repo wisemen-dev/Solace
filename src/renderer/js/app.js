@@ -2,12 +2,16 @@ import { openPreview, isPreviewOpen } from './preview.js'
 import { ensureCover, coverCache } from './covers.js'
 import { burst } from './confetti.js'
 import { initIndex, ensureQueued, textHit } from './textindex.js'
+import { initTheme, cycleTheme, themeLabel } from './theme.js'
 import './palette.js' // 命令面板：自带事件注册，引入即生效
 
 let data = null
 const filters = { categoryId: undefined, tagId: null, keyword: '' }
 let dragDocId = null
 const DORMANT_DAYS = 30
+
+// 界面偏好（theme/viewMode），refresh 时从 data.settings 同步
+const prefs = { theme: 'auto', viewMode: 'grid' }
 
 const $ = (sel) => document.querySelector(sel)
 
@@ -17,9 +21,14 @@ refresh()
 
 async function refresh () {
   data = await window.solace.getLibrary()
+  Object.assign(prefs, data.settings || {})
+  initTheme(prefs)
+  syncViewButton()
   renderAll()
   // 每次刷新都同步一次索引状态：缺索引的书会排进后台提取队列
   initIndex(data.documents)
+  // 开馆动画只播一次：首帧渲染完成后即解除
+  setTimeout(() => document.body.classList.remove('opening'), 1600)
 }
 
 function renderAll () {
@@ -210,8 +219,10 @@ function renderDocList () {
   const catName = Object.fromEntries(data.categories.map(c => [c.id, c.name]))
   const tagName = Object.fromEntries(data.tags.map(t => [t.id, t.name]))
   const cache = coverCache()
+  const spine = prefs.viewMode === 'spine'
 
   $('#countText').textContent = `共 ${data.documents.length} 本 · 显示 ${docs.length} 本`
+  $('#docGrid').classList.toggle('spine-mode', spine)
 
   if (!docs.length) {
     $('#docGrid').innerHTML = `<div class="empty">${
@@ -226,13 +237,27 @@ function renderDocList () {
 
   $('#docGrid').innerHTML = docs.map((d, i) => {
     const cached = cache.get(d.id)
-    // 封面进度环：只在读过（progress 存在）时显示，读毕变绿打勾
+    // 阅读进度：封面墙显示右上角进度环，书脊模式显示底部细进度条
     const pr = d.progress
     const pct = pr && pr.totalPages >= 1 ? Math.min(100, Math.round(pr.page / pr.totalPages * 100)) : 0
     // 全文命中标记：标题/文件名没中但正文命中时提示首个命中页
     const hitPage = nkw && !normText(d.title).includes(nkw) && !normText(d.fileName).includes(nkw)
       ? textHit(d.id, nkw)
       : 0
+
+    if (spine) {
+      // 书脊陈列：纯浏览视图（点击预览、拖拽归档仍可用）
+      return `
+    <div class="doc-card" data-id="${d.id}" draggable="true" style="--i:${i}">
+      <div class="doc-cover" data-action="preview-doc" data-id="${d.id}"
+           title="${esc(d.title)}${pct ? `（读到 ${pct}%）` : ''} · 点击预览">
+        <img class="doc-cover-img" data-doc-id="${d.id}" alt="" ${cached ? `src="${cached}"` : ''}/>
+        <span class="spine-name">${esc(d.title)}</span>
+        ${pct ? `<i class="spine-progress${pct >= 100 ? ' done' : ''}" style="--p:${pct}"></i>` : ''}
+      </div>
+    </div>`
+    }
+
     return `
     <div class="doc-card" data-id="${d.id}" draggable="true" style="--i:${i}">
       <div class="doc-cover" data-action="preview-doc" data-id="${d.id}" title="点击预览">
@@ -263,6 +288,28 @@ function renderDocList () {
     if (doc) coverObserver.observe(img)
   }
 }
+
+/* ================= 顶栏：视图与主题切换 ================= */
+
+function syncViewButton () {
+  const spine = prefs.viewMode === 'spine'
+  const btn = $('#btnView')
+  btn.textContent = spine ? '📖 书脊' : '📚 封面'
+  btn.title = spine ? '切换到封面墙' : '切换到书脊视图'
+}
+
+$('#btnView').addEventListener('click', async () => {
+  prefs.viewMode = prefs.viewMode === 'spine' ? 'grid' : 'spine'
+  syncViewButton()
+  renderDocList()
+  try { await window.solace.updateSettings({ viewMode: prefs.viewMode }) } catch { /* 保存失败不影响本次切换 */ }
+})
+
+$('#btnTheme').addEventListener('click', async () => {
+  const patch = cycleTheme(prefs)
+  try { await window.solace.updateSettings(patch) } catch { /* 保存失败不影响本次切换 */ }
+  toast(`主题：${themeLabel()}`)
+})
 
 // 卡片进入可视区域后再取/生成封面，导入大图书馆时首屏不被拖慢
 const coverObserver = new IntersectionObserver((entries) => {
