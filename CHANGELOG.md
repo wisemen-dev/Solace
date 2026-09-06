@@ -3,6 +3,21 @@
 本项目的所有显著变更记录在此文件中。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.0] - 2026-09-06
+
+### 新增
+- 封面墙：卡片以 PDF 首页渲染的封面为主体，滚动可见时后台生成并存库
+  （`SolaceLibrary/covers/<id>.jpg`），删除文档时封面一并清理
+- 拖拽归档：拖动封面卡到侧栏分类或「未分类」即完成归档，带提示反馈
+- 分类切换瀑布式入场运镜动画（封面错峰淡入上浮）
+- `SOLACE_DATA_DIR` 环境变量：开发/测试时隔离资料库，不污染真实数据
+- `scripts/make-sample-pdfs.js`：无依赖生成测试用 PDF（含合法 xref 构造）
+
+### 修复
+- 窗口最小化恢复后可能整窗不重绘（看起来一片空白）：禁用
+  `CalculateNativeWinOcclusion` 特性，并改为 `ready-to-show` 后再显示窗口
+- pdf.js 加载点收敛到 `renderer/js/pdfjs.js`，预览与封面生成共用，worker 只配置一次
+
 ## [0.1.0] - 2026-09-05
 
 ### 新增

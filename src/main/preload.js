@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('solace', {
   removeDoc: (id) => ipcRenderer.invoke('doc:remove', id),
   openDoc: (id) => ipcRenderer.invoke('doc:open', id),
   readPreview: (id) => ipcRenderer.invoke('preview:read', id),
+  // 封面
+  setCover: (id, dataUrl) => ipcRenderer.invoke('cover:set', id, dataUrl),
+  getCover: (id) => ipcRenderer.invoke('cover:get', id),
   // 分类
   addCategory: (name) => ipcRenderer.invoke('cat:add', name),
   renameCategory: (id, name) => ipcRenderer.invoke('cat:rename', id, name),

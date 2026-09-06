@@ -65,6 +65,13 @@ body {
 }
 .side-list .ops button:hover { color: var(--text); }
 
+/* 拖拽归档时的悬停提示 */
+.side-list li.drop-hint {
+  outline: 1.5px dashed var(--accent);
+  outline-offset: -1.5px;
+  background: var(--accent-soft);
+}
+
 .side-foot {
   margin-top: auto; font-size: 11px; color: var(--muted);
   text-align: center; padding: 8px 0 2px;
@@ -85,10 +92,11 @@ body {
 .search:focus { border-color: var(--accent); }
 .count { font-size: 12px; color: var(--muted); margin-left: auto; }
 
+/* ---------- 封面墙 ---------- */
 .doc-grid {
   flex: 1; overflow-y: auto; padding: 20px 22px;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 14px; align-content: start;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+  gap: 16px; align-content: start;
 }
 
 .empty {
@@ -98,24 +106,67 @@ body {
 
 .doc-card {
   background: var(--card); border: 1px solid var(--line);
-  border-radius: 12px; padding: 14px 16px; cursor: default;
-  display: flex; flex-direction: column; gap: 8px;
-  transition: background 0.15s, transform 0.15s;
+  border-radius: 12px; overflow: hidden;
+  display: flex; flex-direction: column;
+  transition: background 0.15s, transform 0.18s, box-shadow 0.18s;
+  /* 分类切换的瀑布式入场：每张卡按 --i 错峰淡入上浮 */
+  animation: card-in 0.4s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+  animation-delay: calc(min(var(--i, 0), 12) * 35ms);
 }
-.doc-card:hover { background: var(--card-hover); transform: translateY(-2px); }
+.doc-card:hover {
+  background: var(--card-hover);
+  transform: translateY(-3px);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
+}
+.doc-card.dragging { opacity: 0.45; }
+
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.doc-cover {
+  position: relative;
+  aspect-ratio: 210 / 297;
+  background: linear-gradient(160deg, #232c3a 0%, #1a2230 100%);
+  cursor: pointer;
+  overflow: hidden;
+}
+.doc-cover::before {
+  content: '❉';
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 36px; color: rgba(110, 168, 254, 0.16);
+}
+.doc-cover-img {
+  position: relative; z-index: 1;
+  width: 100%; height: 100%;
+  object-fit: cover; display: block;
+  background: #f5f6f8;
+}
+.doc-cover-ops {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+  display: flex; justify-content: center; gap: 6px;
+  padding: 22px 8px 9px;
+  background: linear-gradient(transparent, rgba(8, 10, 14, 0.88));
+  opacity: 0; transition: opacity 0.18s;
+}
+.doc-cover:hover .doc-cover-ops { opacity: 1; }
+.doc-cover-ops .btn-ghost { padding: 3px 9px; font-size: 11px; }
+
+.doc-info { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
 .doc-title {
-  font-size: 14px; font-weight: 600; line-height: 1.4;
+  font-size: 13px; font-weight: 600; line-height: 1.45;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden; cursor: pointer;
 }
 .doc-title:hover { color: var(--accent); }
-.doc-meta { font-size: 11.5px; color: var(--muted); line-height: 1.7; }
+.doc-meta { font-size: 11px; color: var(--muted); }
 .doc-tags { display: flex; flex-wrap: wrap; gap: 5px; }
 .doc-tag {
-  font-size: 11px; background: var(--accent-soft); color: var(--accent);
+  font-size: 10.5px; background: var(--accent-soft); color: var(--accent);
   border-radius: 999px; padding: 1px 8px;
 }
-.doc-ops { display: flex; gap: 6px; margin-top: 2px; }
 
 /* ---------- 按钮 ---------- */
 button { font-family: inherit; }

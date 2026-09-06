@@ -1,7 +1,9 @@
 import { openPreview, isPreviewOpen } from './preview.js'
+import { ensureCover, coverCache } from './covers.js'
 
 let data = null
 const filters = { categoryId: undefined, tagId: null, keyword: '' }
+let dragDocId = null
 
 const $ = (sel) => document.querySelector(sel)
 
@@ -65,7 +67,7 @@ function renderTags () {
     </li>`).join('') || '<li class="side-empty" style="cursor:default;color:var(--muted);font-size:12px;">暂无标签</li>'
 }
 
-/* ================= 主区：文档列表 ================= */
+/* ================= 主区：封面墙 ================= */
 
 function visibleDocs () {
   const kw = filters.keyword.trim().toLowerCase()
@@ -82,6 +84,7 @@ function renderDocList () {
   const docs = visibleDocs()
   const catName = Object.fromEntries(data.categories.map(c => [c.id, c.name]))
   const tagName = Object.fromEntries(data.tags.map(t => [t.id, t.name]))
+  const cache = coverCache()
 
   $('#countText').textContent = `共 ${data.documents.length} 本 · 显示 ${docs.length} 本`
 
@@ -94,24 +97,47 @@ function renderDocList () {
     return
   }
 
-  $('#docGrid').innerHTML = docs.map(d => `
-    <div class="doc-card" data-id="${d.id}">
-      <div class="doc-title" data-action="open-doc" data-id="${d.id}" title="双击用外部阅读器打开">${esc(d.title)}</div>
-      <div class="doc-tags">${
-        d.tagIds.map(t => `<span class="doc-tag"># ${esc(tagName[t] || '?')}</span>`).join('')
-      }</div>
-      <div class="doc-meta">
-        分类：${d.categoryId ? esc(catName[d.categoryId] || '未知') : '未分类'}<br>
-        ${fmtSize(d.size)} · ${fmtDate(d.addedAt)}入库 · 打开 ${d.openCount} 次
+  $('#docGrid').innerHTML = docs.map((d, i) => {
+    const cached = cache.get(d.id)
+    return `
+    <div class="doc-card" data-id="${d.id}" draggable="true" style="--i:${i}">
+      <div class="doc-cover" data-action="preview-doc" data-id="${d.id}" title="点击预览">
+        <img class="doc-cover-img" data-doc-id="${d.id}" alt="" ${cached ? `src="${cached}"` : ''}/>
+        <div class="doc-cover-ops">
+          <button class="btn-ghost" data-action="open-doc" data-id="${d.id}" title="用外部阅读器打开">打开</button>
+          <button class="btn-ghost" data-action="edit-doc" data-id="${d.id}">编辑</button>
+          <button class="btn-ghost btn-danger" data-action="del-doc" data-id="${d.id}">删除</button>
+        </div>
       </div>
-      <div class="doc-ops">
-        <button class="btn-ghost" data-action="preview-doc" data-id="${d.id}">预览</button>
-        <button class="btn-ghost" data-action="open-doc" data-id="${d.id}">打开</button>
-        <button class="btn-ghost" data-action="edit-doc" data-id="${d.id}">编辑</button>
-        <button class="btn-ghost btn-danger" data-action="del-doc" data-id="${d.id}">删除</button>
+      <div class="doc-info">
+        <div class="doc-title" data-action="open-doc" data-id="${d.id}" title="${esc(d.title)}">${esc(d.title)}</div>
+        <div class="doc-tags">${
+          d.tagIds.map(t => `<span class="doc-tag"># ${esc(tagName[t] || '?')}</span>`).join('')
+        }</div>
+        <div class="doc-meta">
+          ${d.categoryId ? esc(catName[d.categoryId] || '未知') : '未分类'} · ${fmtSize(d.size)} · 打开 ${d.openCount} 次
+        </div>
       </div>
-    </div>`).join('')
+    </div>`
+  }).join('')
+
+  // 没有缓存的封面交给观察器：滚动可见时才读取/生成
+  for (const img of document.querySelectorAll('.doc-cover-img:not([src])')) {
+    const doc = data.documents.find(x => x.id === img.dataset.docId)
+    if (doc) coverObserver.observe(img)
+  }
 }
+
+// 卡片进入可视区域后再取/生成封面，导入大图书馆时首屏不被拖慢
+const coverObserver = new IntersectionObserver((entries) => {
+  for (const en of entries) {
+    if (!en.isIntersecting) continue
+    const img = en.target
+    coverObserver.unobserve(img)
+    const doc = data && data.documents.find(x => x.id === img.dataset.docId)
+    if (doc) ensureCover(doc, img)
+  }
+}, { root: document.getElementById('docGrid'), rootMargin: '120px' })
 
 /* ================= 事件：全局委托 ================= */
 
@@ -171,7 +197,7 @@ document.body.addEventListener('click', async (e) => {
       }
       case 'del-doc': {
         const doc = data.documents.find(d => d.id === id)
-        if (confirm(`删除《${doc.title}》？\n将移除库内副本（原文件不受影响）。`)) {
+        if (confirm(`删除《${doc.title}》？\n将移除库内副本与封面（原文件不受影响）。`)) {
           await window.solace.removeDoc(id)
           refresh()
         }
@@ -180,6 +206,65 @@ document.body.addEventListener('click', async (e) => {
     }
   } catch (err) {
     toast(`操作失败：${err.message || err}`)
+  }
+})
+
+/* ================= 拖拽归档：卡片 → 侧栏分类 ================= */
+
+$('#docGrid').addEventListener('dragstart', (e) => {
+  const card = e.target.closest('.doc-card')
+  if (!card) return
+  dragDocId = card.dataset.id
+  e.dataTransfer.setData('application/x-solace-doc', dragDocId)
+  e.dataTransfer.effectAllowed = 'move'
+  card.classList.add('dragging')
+})
+
+document.addEventListener('dragend', () => {
+  document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'))
+  document.querySelectorAll('.drop-hint').forEach(el => el.classList.remove('drop-hint'))
+  dragDocId = null
+})
+
+const catList = $('#catList')
+
+catList.addEventListener('dragover', (e) => {
+  if (!dragDocId) return
+  const li = e.target.closest('li[data-action="filter-cat"]')
+  if (!li) return
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'move'
+  li.classList.add('drop-hint')
+})
+
+catList.addEventListener('dragleave', (e) => {
+  const li = e.target.closest('li')
+  if (li && !li.contains(e.relatedTarget)) li.classList.remove('drop-hint')
+})
+
+catList.addEventListener('drop', async (e) => {
+  const li = e.target.closest('li[data-action="filter-cat"]')
+  if (!li) return
+  const docId = e.dataTransfer.getData('application/x-solace-doc')
+  if (!docId) return
+  e.preventDefault()
+  e.stopPropagation()
+  catList.querySelectorAll('.drop-hint').forEach(el => el.classList.remove('drop-hint'))
+
+  const doc = data.documents.find(d => d.id === docId)
+  if (!doc) return
+  const target = li.dataset.id // 'all' | 'none' | 分类id
+  if (target === 'all') { toast('拖到具体分类或「未分类」即可归档'); return }
+  const categoryId = target === 'none' ? null : target
+  if (doc.categoryId === categoryId) return
+
+  try {
+    await window.solace.updateDoc(docId, { categoryId })
+    const cat = data.categories.find(c => c.id === categoryId)
+    refresh()
+    toast(`《${doc.title}》已归档到「${cat ? cat.name : '未分类'}」`)
+  } catch (err) {
+    toast(`归档失败：${err.message || err}`)
   }
 })
 
@@ -206,10 +291,12 @@ $('#btnAddTag').addEventListener('click', async () => {
   if (name) { try { await window.solace.addTag(name); refresh() } catch (err) { toast(err.message) } }
 })
 
-// 拖拽导入
+// 文件拖入导入（应用内部拖拽归档不触发导入）
 window.addEventListener('dragover', (e) => e.preventDefault())
 window.addEventListener('drop', async (e) => {
   e.preventDefault()
+  const types = [...(e.dataTransfer?.types || [])]
+  if (types.includes('application/x-solace-doc')) return
   const files = [...(e.dataTransfer?.files || [])]
   const pdfs = files.filter(f => f.name.toLowerCase().endsWith('.pdf'))
   if (!pdfs.length) return

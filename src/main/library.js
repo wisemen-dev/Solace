@@ -14,6 +14,7 @@ function init (userDataDir) {
   rootDir = path.join(userDataDir, 'SolaceLibrary')
   dataFile = path.join(rootDir, 'library.json')
   fs.mkdirSync(path.join(rootDir, 'files'), { recursive: true })
+  fs.mkdirSync(path.join(rootDir, 'covers'), { recursive: true })
   if (fs.existsSync(dataFile)) {
     data = JSON.parse(fs.readFileSync(dataFile, 'utf8'))
   } else {
@@ -80,6 +81,7 @@ function updateDoc (id, patch) {
 function removeDoc (id) {
   const doc = findDoc(id)
   fs.rmSync(path.join(rootDir, 'files', `${doc.id}.pdf`), { force: true })
+  fs.rmSync(path.join(rootDir, 'covers', `${doc.id}.jpg`), { force: true })
   data.documents = data.documents.filter(d => d.id !== id)
   save()
   return true
@@ -100,6 +102,26 @@ function markOpened (id) {
   doc.openedAt = new Date().toISOString()
   doc.openCount += 1
   save()
+}
+
+// ---- 封面 ----
+// 封面由渲染进程用 pdf.js 渲染首页生成，以 JPEG dataURL 传回，存为 covers/<id>.jpg
+
+function setCover (id, dataUrl) {
+  findDoc(id)
+  const m = /^data:image\/(png|jpeg);base64,(.+)$/.exec(String(dataUrl || ''))
+  if (!m) throw new Error('无效的封面数据')
+  fs.writeFileSync(path.join(rootDir, 'covers', `${id}.jpg`), Buffer.from(m[2], 'base64'))
+  findDoc(id).hasCover = true
+  save()
+  return true
+}
+
+function getCoverDataUrl (id) {
+  findDoc(id)
+  const file = path.join(rootDir, 'covers', `${id}.jpg`)
+  if (!fs.existsSync(file)) return null
+  return `data:image/jpeg;base64,${fs.readFileSync(file).toString('base64')}`
 }
 
 function addCategory (name) {
@@ -157,6 +179,8 @@ module.exports = {
   getDocPath,
   readFileBuffer,
   markOpened,
+  setCover,
+  getCoverDataUrl,
   addCategory,
   renameCategory,
   removeCategory,
