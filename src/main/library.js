@@ -23,10 +23,13 @@ function init (userDataDir) {
       createdAt: new Date().toISOString(),
       categories: [], // { id, name, parentId: null }
       tags: [],       // { id, name }
-      documents: []   // 见 importPdf()
+      documents: [],  // 见 importPdf()
+      history: []     // 打开事件 { docId, at }，足迹面板用
     }
     save()
   }
+  // 0.2.0 及之前建的库没有 history 字段，补齐
+  if (!Array.isArray(data.history)) data.history = []
 }
 
 function getData () {
@@ -101,6 +104,8 @@ function markOpened (id) {
   const doc = findDoc(id)
   doc.openedAt = new Date().toISOString()
   doc.openCount += 1
+  data.history.push({ docId: id, at: doc.openedAt })
+  if (data.history.length > 200) data.history = data.history.slice(-200)
   save()
 }
 

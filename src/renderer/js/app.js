@@ -1,9 +1,11 @@
 import { openPreview, isPreviewOpen } from './preview.js'
 import { ensureCover, coverCache } from './covers.js'
+import { burst } from './confetti.js'
 
 let data = null
 const filters = { categoryId: undefined, tagId: null, keyword: '' }
 let dragDocId = null
+const DORMANT_DAYS = 30
 
 const $ = (sel) => document.querySelector(sel)
 
@@ -20,6 +22,7 @@ function renderAll () {
   renderCategories()
   renderTags()
   renderDocList()
+  updateDormantBadge()
 }
 
 /* ================= 侧栏：分类 ================= */
@@ -263,6 +266,7 @@ catList.addEventListener('drop', async (e) => {
     const cat = data.categories.find(c => c.id === categoryId)
     refresh()
     toast(`《${doc.title}》已归档到「${cat ? cat.name : '未分类'}」`)
+    burst(e.clientX, e.clientY)
   } catch (err) {
     toast(`归档失败：${err.message || err}`)
   }
@@ -362,6 +366,65 @@ function askText (title, initial = '') {
   })
 }
 
+/* ================= 阅读足迹与沉睡提醒 ================= */
+
+// 沉睡判定：以「最近一次打开」（从未打开则用入库时间）距今超过 30 天为准
+function dormantDocs () {
+  const cutoff = Date.now() - DORMANT_DAYS * 86400000
+  return data.documents
+    .filter(d => new Date(d.openedAt || d.addedAt).getTime() < cutoff)
+    .sort((a, b) => new Date(a.openedAt || a.addedAt) - new Date(b.openedAt || b.addedAt))
+}
+
+function updateDormantBadge () {
+  const n = dormantDocs().length
+  const btn = $('#btnDormant')
+  btn.hidden = n === 0
+  $('#dormantCount').textContent = n
+  btn.title = `${n} 本书已沉睡超过 ${DORMANT_DAYS} 天`
+}
+
+function renderStats () {
+  const now = Date.now()
+  const docs = data.documents
+  const totalOpens = docs.reduce((s, d) => s + d.openCount, 0)
+  const inDays = days => (data.history || [])
+    .filter(h => now - new Date(h.at).getTime() <= days * 86400000).length
+  const dormant = dormantDocs()
+
+  $('#statsOverview').innerHTML = `
+    <span class="stats-chip"><b>${docs.length}</b>本藏书</span>
+    <span class="stats-chip"><b>${totalOpens}</b>次累计打开</span>
+    <span class="stats-chip"><b>${inDays(7)}</b>次近 7 天</span>
+    <span class="stats-chip"><b>${inDays(30)}</b>次近 30 天</span>
+    <span class="stats-chip"><b>${dormant.length}</b>本沉睡中</span>`
+
+  const titleOf = id => {
+    const d = docs.find(x => x.id === id)
+    return d ? d.title : '（已删除文档）'
+  }
+  const recent = (data.history || []).slice(-8).reverse()
+  $('#statsRecent').innerHTML = recent.length
+    ? recent.map(h =>
+        `<li><span class="t">《${esc(titleOf(h.docId))}》</span><span class="when">${fmtRel(h.at)}</span></li>`
+      ).join('')
+    : '<li class="empty-line">还没有打开记录，从封面或「打开」开始第一页吧</li>'
+
+  $('#statsDormant').innerHTML = dormant.length
+    ? dormant.slice(0, 12).map(d => {
+        const last = d.openedAt || d.addedAt
+        const days = Math.floor((now - new Date(last).getTime()) / 86400000)
+        const reason = d.openCount === 0 ? `入库 ${days} 天，还没翻开过` : `${days} 天没打开了`
+        return `<li><span class="t">《${esc(d.title)}》</span><span class="reason">${reason}</span>` +
+          `<button class="btn-ghost" data-action="open-doc" data-id="${d.id}">打开</button></li>`
+      }).join('') + (dormant.length > 12 ? `<li class="empty-line">…还有 ${dormant.length - 12} 本</li>` : '')
+    : '<li class="empty-line">没有沉睡的书，保持得很好 🌿</li>'
+}
+
+$('#btnStats').addEventListener('click', () => { renderStats(); $('#statsDialog').showModal() })
+$('#btnStatsClose').addEventListener('click', () => $('#statsDialog').close())
+$('#btnDormant').addEventListener('click', () => { renderStats(); $('#statsDialog').showModal() })
+
 /* ================= 预览浮层的关闭按钮 ================= */
 
 $('#btnPreviewClose').addEventListener('click', () => window.closePreview?.())
@@ -402,4 +465,16 @@ function fmtSize (n) {
 
 function fmtDate (iso) {
   return iso ? new Date(iso).toLocaleDateString('zh-CN') : '—'
+}
+
+function fmtRel (iso) {
+  if (!iso) return '—'
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
+  if (m < 1) return '刚刚'
+  if (m < 60) return `${m} 分钟前`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h} 小时前`
+  const d = Math.floor(h / 24)
+  if (d < 30) return `${d} 天前`
+  return new Date(iso).toLocaleDateString('zh-CN')
 }

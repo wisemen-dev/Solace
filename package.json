@@ -1,7 +1,7 @@
 {
   "name": "solace",
   "productName": "Solace",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Solace — 本地 PDF 私人图书馆：集中管理、手动分类、轻量预览。",
   "author": "Molly",
   "license": "MIT",

@@ -270,6 +270,42 @@ button { font-family: inherit; }
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ---------- 阅读足迹面板 ---------- */
+.stats-dialog { width: 580px; max-width: 92vw; max-height: 82vh; overflow-y: auto; }
+.stats-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.stats-head h3 { margin: 0; }
+.stats-overview { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.stats-chip {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 7px 12px; font-size: 12.5px; color: var(--muted);
+}
+.stats-chip b { color: var(--accent); font-size: 15px; margin-right: 3px; }
+.stats-section { margin-bottom: 16px; }
+.stats-section h4 {
+  font-size: 12px; color: var(--muted); letter-spacing: 2px;
+  text-transform: uppercase; margin-bottom: 8px;
+}
+.stats-sub { letter-spacing: 0; text-transform: none; font-weight: 400; }
+.stats-list {
+  list-style: none; display: flex; flex-direction: column; gap: 6px;
+  max-height: 230px; overflow-y: auto;
+}
+.stats-list li {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 9px; padding: 8px 12px; font-size: 13px;
+}
+.stats-list .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stats-list .when { color: var(--muted); font-size: 12px; }
+.stats-list .reason { color: #e5b567; font-size: 12px; }
+.stats-list .empty-line { color: var(--muted); justify-content: center; padding: 12px; }
+
+.dormant-badge { color: #e5b567; border-color: rgba(229, 181, 103, 0.45); }
+.dormant-badge:hover { color: #e5b567; border-color: #e5b567; }
+
+/* ---------- 庆祝彩蛋 ---------- */
+.confetti-canvas { position: fixed; inset: 0; pointer-events: none; z-index: 200; }
+
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover { background: #334052; }
