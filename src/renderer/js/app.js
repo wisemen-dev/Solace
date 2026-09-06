@@ -72,13 +72,17 @@ function renderTags () {
 
 /* ================= 主区：封面墙 ================= */
 
+// 搜索与排序用的归一化：小写化并剔除全部空白（含全角空格），
+// 使「rust程序」能命中标题为「Rust 程序设计语言」这类中英混排带空格的书名
+const normText = (s) => String(s || '').toLowerCase().replace(/\s+/g, '')
+
 function visibleDocs () {
-  const kw = filters.keyword.trim().toLowerCase()
+  const kw = normText(filters.keyword)
   return data.documents.filter(d => {
     if (filters.categoryId === null && d.categoryId !== null) return false
     if (typeof filters.categoryId === 'string' && d.categoryId !== filters.categoryId) return false
     if (filters.tagId && !d.tagIds.includes(filters.tagId)) return false
-    if (kw && !d.title.toLowerCase().includes(kw)) return false
+    if (kw && !normText(d.title).includes(kw) && !normText(d.fileName).includes(kw)) return false
     return true
   })
 }
