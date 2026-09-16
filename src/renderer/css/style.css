@@ -441,8 +441,12 @@ button { font-family: inherit; }
    settings.js 的读写与联动机制不变） */
 .settings-dialog {
   width: 680px; max-width: 94vw; height: 560px; max-height: 84vh;
-  overflow: hidden; display: flex; flex-direction: column;
+  overflow: hidden;
 }
+/* display:flex 会压过 dialog 关闭后的 UA display:none（同 preview-overlay
+   当年的 hidden 坑），关闭后弹窗会以透明残影叠在主界面上——flex 只在
+   打开状态启用 */
+.settings-dialog[open] { display: flex; flex-direction: column; }
 .settings-head { flex-shrink: 0; }
 .settings-body { flex: 1; min-height: 0; display: flex; }
 .settings-nav {

@@ -251,6 +251,13 @@ notesBtn.addEventListener('click', () => {
   openNotes(currentDoc, () => ({ page: pageNum, total: pdf ? pdf.numPages : 0 }))
 })
 
+// 点击正文区域（阅读页获得焦点）自动收起目录/笔记侧栏：开始阅读即让出
+// 版面。两个面板是 previewBody 的兄弟节点，面板内部的点击不会冒泡到这里
+body.addEventListener('click', () => {
+  if (!tocPanel.hidden) tocPanel.hidden = true
+  if (isNotesOpen()) closeNotes()
+})
+
 tocList.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-page]')
   if (!btn || !pdf) return
