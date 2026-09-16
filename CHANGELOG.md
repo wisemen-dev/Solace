@@ -3,6 +3,28 @@
 本项目的所有显著变更记录在此文件中。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.14.0] - 2026-09-16
+
+### 变更（动效系统重构）
+- 动效令牌化：时长四档（fast 150 / standard 220 / exit 130 / slow 400ms）
+  + ease-out-expo / ease-in-expo 双曲线；全应用 11 处手写缓动杂存
+  （三种曲线混用）归一到令牌
+- 入场编排改为按需播放：卡片 stagger 入场只在明确的视图/筛选/收藏夹
+  /命令面板跳转/点书堆进入时播放；搜索逐键与数据刷新不再让整个书架
+  重新入场——此前每次重渲染都重播，搜索时逐键闪烁
+- 全部 6 个对话框补进出场：淡入+微上浮、出场更快收回、遮罩同步淡入，
+  用原生 `@starting-style` + `transition-behavior: allow-discrete`
+  （Electron 38 的 Chromium 140 原生支持），零 JS
+- 预览浮层淡入淡出；目录/笔记侧栏从左轻滑入出；批量操作栏上滑入场
+- 主题切换走 View Transition 整页交叉淡入，四套配色不再硬跳；
+  首帧渲染与系统「减少动态」时直接写入
+- 可访问性地板：`prefers-reduced-motion` 时一切动画/过渡降到近零；
+  键盘导航补 `:focus-visible` 焦点环；按钮补按压下沉反馈
+- 验证：无头探测确认 allow-discrete / View Transition 引擎支持与
+  过渡属性生效（hidden 置位后 display 在过渡期保持旧值即 allow-discrete
+  工作铁证）；入场门控（无标记 none / 有标记 card-in）；弹窗开合静帧
+  与重构前逐字节一致；三视图布局实测无回归
+
 ## [0.13.3] - 2026-09-16
 
 ### 新增

@@ -21,14 +21,28 @@ export function resolvedFor (mode, now = new Date()) {
   return 'ink'
 }
 
+function prefersReducedMotion () {
+  return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
 function apply (settings) {
   const mode = CYCLE.includes(settings.theme) ? settings.theme : 'auto'
   const resolved = resolvedFor(mode)
-  document.documentElement.dataset.theme = resolved
-  document.documentElement.dataset.themeMode = mode
-  localStorage.setItem('solace-theme', resolved)
-  // 模式一并落盘：theme-boot.js 首帧对「自动」按当前时间重新解析
-  localStorage.setItem('solace-theme-mode', mode)
+  const changed = document.documentElement.dataset.theme !== resolved
+  const write = () => {
+    document.documentElement.dataset.theme = resolved
+    document.documentElement.dataset.themeMode = mode
+    localStorage.setItem('solace-theme', resolved)
+    // 模式一并落盘：theme-boot.js 首帧对「自动」按当前时间重新解析
+    localStorage.setItem('solace-theme-mode', mode)
+  }
+  // 主题实变（手动切换 / 时段到点）走 View Transition 整页交叉淡入，
+  // 四套配色不再硬跳；首帧渲染与系统减少动态时直接写入
+  if (changed && !prefersReducedMotion() && document.startViewTransition) {
+    document.startViewTransition(write)
+  } else {
+    write()
+  }
   syncOpeningFlag(settings)
   return { mode, resolved }
 }

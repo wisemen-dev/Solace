@@ -18,6 +18,11 @@ const DEFAULT_DORMANT_DAYS = 30
 let batchMode = false
 const batchSelected = new Set()
 
+// 入场编排开关：下一次 renderDocList 是否播 stagger 入场。仅在明确的
+// 视图/筛选/收藏夹切换时置 true；搜索逐键、数据刷新等重渲染不重播，
+// 否则每敲一个键整个书架就重新入场一次
+let entrancePending = true
+
 // 界面偏好（theme/viewMode），refresh 时从 data.settings 同步
 const prefs = { theme: 'auto', viewMode: 'grid' }
 
@@ -207,6 +212,7 @@ function applyShelf (shelf) {
   filters.categoryId = f.categoryId === undefined ? undefined : f.categoryId
   filters.tagId = f.tagId || null
   filters.keyword = f.keyword || ''
+  entrancePending = true // 应用收藏夹 = 明确的筛选切换
   $('#searchInput').value = filters.keyword
   renderAll()
 }
@@ -237,6 +243,8 @@ function renderDocList () {
   syncViewButton()
   updateBatchBar()
   updateBatchCategoryOptions()
+  const entrance = entrancePending // 本次渲染消费一次入场标记
+  entrancePending = false
   const docs = visibleDocs()
   const catName = Object.fromEntries(data.categories.map(c => [c.id, c.name]))
   const tagName = Object.fromEntries(data.tags.map(t => [t.id, t.name]))
@@ -269,7 +277,7 @@ function renderDocList () {
   }
 
   if (shelf) {
-    renderPileShelf()
+    renderPileShelf(entrance)
     return
   }
 
@@ -286,7 +294,7 @@ function renderDocList () {
     if (prefs.viewMode === 'spine') {
       // 书脊陈列：纯浏览视图（点击预览、拖拽归档仍可用）
       return `
-    <div class="doc-card" data-id="${d.id}" draggable="true" style="--i:${i}">
+    <div class="doc-card${entrance ? ' enter' : ''}" data-id="${d.id}" draggable="true" style="--i:${i}">
       <div class="doc-cover" data-action="preview-doc" data-id="${d.id}"
            title="${esc(d.title)}${pct ? `（读到 ${pct}%）` : ''} · 点击预览">
         <img class="doc-cover-img" data-doc-id="${d.id}" alt="" ${cached ? `src="${cached}"` : ''}/>
@@ -297,7 +305,7 @@ function renderDocList () {
     }
 
     return `
-    <div class="doc-card" data-id="${d.id}" draggable="true" style="--i:${i}">
+    <div class="doc-card${entrance ? ' enter' : ''}" data-id="${d.id}" draggable="true" style="--i:${i}">
       <div class="doc-cover" data-action="preview-doc" data-id="${d.id}" title="点击预览">
         ${batchMode ? `<span class="doc-check${batchSelected.has(d.id) ? ' on' : ''}"></span>` : ''}
         <img class="doc-cover-img" data-doc-id="${d.id}" alt="" ${cached ? `src="${cached}"` : ''}/>
@@ -350,6 +358,7 @@ function syncViewButton () {
 
 $('#btnView').addEventListener('click', async () => {
   exitBatch() // 批量管理只在封面墙提供：切视图即退出
+  entrancePending = true // 明确的视图切换：播放入场编排
   const next = VIEW_ORDER[(VIEW_ORDER.indexOf(effectiveView()) + 1) % VIEW_ORDER.length]
   prefs.viewMode = next
   if (next === 'shelf') {
@@ -395,7 +404,7 @@ const PILE_STACKS = {
   4: [[-25, 27, -2.2, 0.94], [25, 4, 2.2, 0.96], [8, 2, -1.2, 0.98], [0, 0, 0, 1]]
 }
 
-function renderPileShelf () {
+function renderPileShelf (entrance) {
   const topCats = data.categories.filter(c => !c.parentId)
   const counts = categoryCounts()
   const piles = topCats.map((c, i) => ({
@@ -429,7 +438,7 @@ function renderPileShelf () {
       ? pileStackHtml(p.books)
       : '<div class="pile-empty">❉<span>空书堆</span></div>'
     return `
-    <div class="doc-card pile-card" data-action="pile-open" data-id="${p.key}" style="--i:${i}"
+    <div class="doc-card pile-card${entrance ? ' enter' : ''}" data-action="pile-open" data-id="${p.key}" style="--i:${i}"
          title="打开「${esc(p.name)}」书堆">
       <div class="pile-stack">${stack}</div>
       <div class="pile-caption">
@@ -439,7 +448,7 @@ function renderPileShelf () {
       </div>
     </div>`
   }).join('') + `
-    <button class="pile-new" data-action="pile-newcat" style="--i:${piles.length}">
+    <button class="pile-new${entrance ? ' enter' : ''}" data-action="pile-newcat" style="--i:${piles.length}">
       ＋<span>新建分类</span>
     </button>`
 
@@ -479,6 +488,7 @@ function docsInCategory (catId) {
 async function openPile (key) {
   filters.categoryId = key === 'none' ? null : key
   prefs.viewMode = 'grid'
+  entrancePending = true // 点书堆进入封面墙：播放入场编排
   syncViewButton()
   renderAll()
   try { await window.solace.updateSettings({ viewMode: 'grid' }) } catch { /* 下次启动仍为书架也可接受 */ }
@@ -621,6 +631,7 @@ document.body.addEventListener('click', async (e) => {
     switch (action) {
       case 'filter-cat': {
         filters.categoryId = id === 'all' ? undefined : id === 'none' ? null : id
+        entrancePending = true // 明确的筛选切换：播放入场编排
         // 书架总览不显示单本书：点了分类就切到封面墙看书
         if (prefs.viewMode === 'shelf') {
           prefs.viewMode = 'grid'
@@ -672,6 +683,7 @@ document.body.addEventListener('click', async (e) => {
       }
       case 'filter-tag': {
         filters.tagId = filters.tagId === id ? null : id
+        entrancePending = true
         renderAll()
         break
       }
@@ -901,6 +913,7 @@ window.addEventListener('solace-palette', (e) => {
     filters.categoryId = d.categoryId === undefined ? undefined : d.categoryId
     filters.tagId = d.tagId || null
     filters.keyword = d.keyword || ''
+    entrancePending = true // 命令面板的筛选跳转：播放入场编排
     $('#searchInput').value = filters.keyword
     renderAll()
   } else if (d.type === 'action') {
@@ -920,6 +933,7 @@ window.addEventListener('solace-settings', (e) => {
   const patch = e.detail || {}
   Object.assign(prefs, patch)
   if ('theme' in patch) applyTheme(prefs)
+  if ('viewMode' in patch) entrancePending = true
   if ('viewMode' in patch || 'coverSize' in patch) renderAll()
   if ('dormantDays' in patch) updateDormantBadge()
   if ('confetti' in patch || 'resumeReading' in patch || 'indexPageLimit' in patch) applySettingFlags()
