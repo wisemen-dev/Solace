@@ -158,7 +158,7 @@ function renderTags () {
         <button data-action="del-tag" data-id="${t.id}" title="删除">✕</button>
       </span>
       <span class="badge">${counts[t.id] || 0}</span>
-    </li>`).join('') || '<li class="side-empty" style="cursor:default;color:var(--muted);font-size:12px;">暂无标签</li>'
+    </li>`).join('') || '<li class="side-empty">暂无标签</li>'
 }
 
 /* ================= 侧栏：智能收藏夹 ================= */
@@ -190,7 +190,7 @@ function renderShelves () {
         <button data-action="rename-shelf" data-id="${s.id}" title="重命名">✎</button>
         <button data-action="del-shelf" data-id="${s.id}" title="删除">✕</button>
       </span>
-    </li>`).join('') || '<li class="side-empty" style="cursor:default;color:var(--muted);font-size:12px;">暂无收藏夹<br>筛选后点上方 ＋ 保存</li>'
+    </li>`).join('') || '<li class="side-empty">暂无收藏夹<br>筛选后点上方 ＋ 保存</li>'
 }
 
 function suggestedShelfName (f) {
@@ -250,6 +250,9 @@ function renderDocList () {
   grid.style.setProperty('--cover-min', COVER_MIN[prefs.coverSize] || COVER_MIN.medium)
   // 书架（分类书堆总览）：无搜索词时生效；一搜索就回退封面墙显示结果
   const shelf = prefs.viewMode === 'shelf' && !nkw
+  // 书架视图没有勾选语义：批量中清空搜索回到书架时自动退出（本帧内直接
+  // 复位，不递归重渲染）
+  if (shelf && batchMode) resetBatchState()
   grid.classList.toggle('spine-mode', prefs.viewMode === 'spine' && !shelf)
   grid.classList.toggle('shelf-mode', shelf)
   // 批量勾选只在封面墙提供（书脊无操作按钮、书架是分类书堆）
@@ -483,6 +486,13 @@ async function openPile (key) {
 
 /* ================= 批量管理（封面墙多选删除） ================= */
 
+function resetBatchState () {
+  batchMode = false
+  batchSelected.clear()
+  $('#btnBatch').textContent = '☑ 批量'
+  $('#batchBar').hidden = true
+}
+
 function enterBatch () {
   batchMode = true
   $('#btnBatch').textContent = '✕ 退出批量'
@@ -492,10 +502,7 @@ function enterBatch () {
 
 function exitBatch () {
   if (!batchMode) return
-  batchMode = false
-  batchSelected.clear()
-  $('#btnBatch').textContent = '☑ 批量'
-  $('#batchBar').hidden = true
+  resetBatchState()
   renderDocList()
 }
 

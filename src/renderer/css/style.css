@@ -108,6 +108,8 @@ body {
 .side-list li.dragging { opacity: 0.45; }
 .side-list .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-list .badge { font-size: 11px; color: var(--muted); }
+/* 标签/收藏夹为空的占位条目：提示文案，不可点 */
+.side-list .side-empty { cursor: default; color: var(--muted); font-size: 12px; padding: 6px 8px; line-height: 1.7; }
 /* 分类树的折叠箭头：无子分类时用同宽占位保持名字对齐 */
 .side-list .caret {
   border: none; background: none; color: var(--muted);
@@ -736,9 +738,10 @@ body.opening .side-foot { animation: fade-in 0.6s 0.55s ease backwards; }
 .pile-new:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ---------- 批量管理（封面墙多选删书 + 笔记面板多选删笔记） ---------- */
+/* 低于预览浮层（50）：批量中经命令面板打开预览时，操作栏让位沉到浮层下 */
 .batch-bar {
   position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-  z-index: 60; display: flex; align-items: center; gap: 10px;
+  z-index: 40; display: flex; align-items: center; gap: 10px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
   padding: 9px 14px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
