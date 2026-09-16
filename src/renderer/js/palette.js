@@ -1,14 +1,10 @@
 import { openPreview } from './preview.js'
 import { textHit } from './textindex.js'
+import { normText, esc } from './util.js'
 
 // Ctrl+K 命令面板：搜书（标题/文件名/全文）、执行常用动作、跳转到分类/标签。
 // 每次打开现取一次资料库（一次 IPC）；筛选与动作经 'solace-palette' 事件
 // 交回 app.js 执行，本模块不持有主界面状态。
-
-const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, '')
-const esc = (s) => String(s).replace(/[&<>"']/g, c => ({
-  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-}[c]))
 
 const dlg = document.getElementById('paletteDialog')
 const input = document.getElementById('paletteInput')
@@ -20,7 +16,9 @@ const ACTIONS = [
   { icon: '#', label: '新建标签…', payload: { type: 'action', name: 'new-tag' } },
   { icon: '⭐', label: '把当前筛选保存为收藏夹…', payload: { type: 'action', name: 'save-shelf' } },
   { icon: '📊', label: '打开阅读足迹', payload: { type: 'action', name: 'stats' } },
-  { icon: '🌙', label: '打开沉睡清单', payload: { type: 'action', name: 'dormant' } }
+  { icon: '🌙', label: '打开沉睡清单', payload: { type: 'action', name: 'dormant' } },
+  { icon: '🚀', label: '打开外部工具', payload: { type: 'action', name: 'tool' } },
+  { icon: '⚙', label: '打开设置', payload: { type: 'action', name: 'settings' } }
 ]
 
 let lastData = null
@@ -40,19 +38,19 @@ async function openPalette () {
 }
 
 function buildItems (data, kw) {
-  const nkw = norm(kw)
+  const nkw = normText(kw)
   const out = []
-  const hit = (s) => !nkw || norm(s).includes(nkw)
+  const hit = (s) => !nkw || normText(s).includes(nkw)
 
   if (!nkw) {
-    // 空关键词：常用动作 + 最近打开的书
+    // 空关键词：常用动作 + 最近翻开的书
     for (const a of ACTIONS) out.push({ kind: 'action', icon: a.icon, label: a.label, hint: '动作', payload: a.payload })
     const seen = new Set()
     for (const h of (data.history || []).slice(-5).reverse()) {
       if (seen.has(h.docId)) continue
       seen.add(h.docId)
       const d = data.documents.find(x => x.id === h.docId)
-      if (d) out.push({ kind: 'book', icon: '🕘', label: d.title, hint: '最近打开', payload: { doc: d, hitPage: null } })
+      if (d) out.push({ kind: 'book', icon: '🕘', label: d.title, hint: '最近翻开', payload: { doc: d, hitPage: null } })
     }
     return out.slice(0, 14)
   }
@@ -63,7 +61,7 @@ function buildItems (data, kw) {
 
   const tagName = Object.fromEntries(data.tags.map(t => [t.id, t.name]))
   for (const d of data.documents) {
-    const titleHit = norm(d.title).includes(nkw) || norm(d.fileName).includes(nkw)
+    const titleHit = normText(d.title).includes(nkw) || normText(d.fileName).includes(nkw)
     const hp = titleHit ? 0 : textHit(d.id, nkw)
     if (!titleHit && !hp) continue
     out.push({

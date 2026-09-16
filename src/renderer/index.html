@@ -50,11 +50,13 @@
         <input id="searchInput" class="search" type="search" placeholder="搜索标题或全文…" />
         <button id="btnPalette" class="btn-ghost" title="命令面板（Ctrl+K）">⌘K</button>
         <button id="btnView" class="btn-ghost" title="切换陈列视图">📚 封面</button>
+        <button id="btnBatch" class="btn-ghost" title="批量管理（多选删除）">☑ 批量</button>
         <button id="btnTheme" class="btn-ghost" title="主题">🌓</button>
         <span id="countText" class="count"></span>
         <span id="indexStatus" class="index-status" hidden></span>
         <button id="btnDormant" class="btn-ghost dormant-badge" hidden title="">🌙 <span id="dormantCount">0</span></button>
         <button id="btnStats" class="btn-ghost" title="阅读足迹">足迹</button>
+        <button id="btnSettings" class="btn-ghost" title="设置">⚙</button>
       </header>
       <section id="docGrid" class="doc-grid"></section>
     </main>
@@ -65,20 +67,38 @@
     <div id="tocPanel" class="toc-panel" hidden>
       <ul id="tocList" class="toc-list"></ul>
     </div>
+    <!-- 笔记面板：与目录面板同一定位体系，两者互斥显示 -->
+    <div id="notesPanel" class="toc-panel notes-panel" hidden>
+      <div class="notes-head">
+        <span class="notes-title">笔记</span>
+        <button id="btnNoteDel" class="btn-ghost" hidden title="删除所选笔记（移入回收站）">删除</button>
+        <button id="btnNoteBatch" class="btn-ghost" title="多选批量删除笔记">批量</button>
+        <button id="btnNoteNew" class="btn-ghost" title="新建一条笔记并用 Typora 打开">＋ 新建</button>
+      </div>
+      <ul id="notesList" class="notes-list"></ul>
+      <button id="btnNoteReveal" class="btn-ghost notes-reveal" title="在资源管理器中定位笔记文件">📂 在文件夹中查看</button>
+    </div>
     <div class="preview-head">
       <span id="previewTitle" class="preview-title"></span>
-      <span id="previewPage" class="preview-page"></span>
       <div class="preview-actions">
         <button id="btnToc" class="btn-ghost" hidden title="本书的书签目录">目录</button>
+        <button id="btnNotes" class="btn-ghost" title="本书的阅读笔记">笔记</button>
         <button id="btnPreviewExternal" class="btn-ghost">外部打开</button>
         <button id="btnPreviewClose" class="btn-ghost">✕</button>
       </div>
     </div>
     <div id="previewBody" class="preview-body">
       <canvas id="previewCanvas"></canvas>
+      <!-- 渲染失败提示：pdf.js 兼容性限制时不再静默白屏 -->
+      <div id="previewError" class="preview-error" hidden>
+        <span id="previewErrorText"></span>
+        <button id="btnRetryRender" class="btn-ghost">重试</button>
+      </div>
     </div>
     <div class="preview-foot">
       <button id="btnPrevPage" class="btn-ghost">← 上一页</button>
+      <input id="pageJump" class="page-jump" type="text" inputmode="numeric" title="输入页码后回车跳转" />
+      <span class="preview-total">/ <span id="pageTotal">0</span> 页</span>
       <button id="btnNextPage" class="btn-ghost">下一页 →</button>
     </div>
   </div>
@@ -117,13 +137,173 @@
       <div id="statsChart" class="stats-chart"></div>
     </div>
     <div class="stats-section">
-      <h4>最近打开</h4>
+      <h4>最近翻开</h4>
       <ul id="statsRecent" class="stats-list"></ul>
     </div>
     <div class="stats-section">
-      <h4>沉睡提醒 <span class="stats-sub">超过 30 天未读</span></h4>
+      <h4>沉睡提醒 <span id="statsDormantHint" class="stats-sub">超过 30 天未读</span></h4>
       <ul id="statsDormant" class="stats-list"></ul>
     </div>
+  </dialog>
+
+  <!-- 通用确认对话框（可带勾选项，如删除文档时的笔记处理） -->
+  <dialog id="confirmDialog" class="dialog dialog-narrow">
+    <h3 id="confirmDialogTitle"></h3>
+    <p id="confirmDialogText" class="confirm-text"></p>
+    <label id="confirmCheckRow" class="check-row">
+      <input id="confirmDialogCheck" type="checkbox" />
+      <span id="confirmCheckLabel"></span>
+    </label>
+    <div class="dialog-foot">
+      <button id="confirmDialogCancel" class="btn-ghost">取消</button>
+      <button id="confirmDialogOk" class="btn-primary">确定</button>
+    </div>
+  </dialog>
+
+  <!-- 多选对话框（如「移动资料库 / 新建资料库」），按钮动态生成 -->
+  <dialog id="choiceDialog" class="dialog dialog-narrow">
+    <h3 id="choiceDialogTitle"></h3>
+    <p id="choiceDialogText" class="confirm-text"></p>
+    <div id="choiceButtons" class="choice-buttons"></div>
+  </dialog>
+
+  <!-- 设置面板：分区（外观 / 阅读与索引 / 笔记 / 提醒 / 资料库），更改即时生效 -->
+  <dialog id="settingsDialog" class="dialog settings-dialog">
+    <div class="settings-head">
+      <h3>设置</h3>
+      <button id="btnSettingsClose" class="btn-ghost">✕</button>
+    </div>
+    <div class="settings-body">
+      <nav id="settingsNav" class="settings-nav">
+        <button type="button" data-sec="appearance" class="active">外观</button>
+        <button type="button" data-sec="reading">阅读与索引</button>
+        <button type="button" data-sec="notes">笔记</button>
+        <button type="button" data-sec="reminders">提醒</button>
+        <button type="button" data-sec="library">资料库</button>
+      </nav>
+      <div class="settings-panes">
+      <section class="settings-group active" data-sec="appearance">
+        <h4>外观</h4>
+        <div class="settings-row">
+          <div class="settings-label">主题<span class="hint">「自动」按时段切换：7–12 点纸张，12–18 点黄昏，其余墨水；运行中到点实时切换</span></div>
+          <select id="setTheme" class="settings-select">
+            <option value="auto">自动（按时段）</option>
+            <option value="ink">墨水（暗）</option>
+            <option value="paper">纸张（暖白）</option>
+            <option value="dusk">黄昏（琥珀）</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">陈列视图<span class="hint">启动时的默认视图，顶栏按钮可随时切换</span></div>
+          <select id="setView" class="settings-select">
+            <option value="grid">📚 封面墙</option>
+            <option value="spine">📖 书脊</option>
+            <option value="shelf">🏛 书架</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">封面卡片大小<span class="hint">仅封面墙视图生效</span></div>
+          <select id="setCoverSize" class="settings-select">
+            <option value="small">小</option>
+            <option value="medium">中（默认）</option>
+            <option value="large">大</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">开馆动画<span class="hint">启动时的错峰入场动画</span></div>
+          <input id="setOpening" type="checkbox" />
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">庆祝纸屑<span class="hint">归档成功与读完全书时的小彩蛋</span></div>
+          <input id="setConfetti" type="checkbox" />
+        </div>
+      </section>
+
+      <section class="settings-group" data-sec="reading">
+        <h4>阅读与索引</h4>
+        <div class="settings-row">
+          <div class="settings-label">恢复上次阅读位置<span class="hint">打开预览时自动回到上次读到的页码（搜索直达跳页优先）</span></div>
+          <input id="setResume" type="checkbox" />
+        </div>
+        <div class="settings-row col">
+          <div class="settings-label">外部 PDF 阅读器<span class="hint">卡片「打开」与预览「外部打开」使用的程序；留空 = 自动探测（SumatraPDF / Foxit）→ 系统默认关联</span></div>
+          <div class="path-row">
+            <input id="setPdfReader" class="field-input" type="text" placeholder="C:\Program Files\SumatraPDF\SumatraPDF.exe" />
+            <button id="btnBrowsePdfReader" class="btn-ghost">浏览…</button>
+          </div>
+        </div>
+        <div class="settings-row col">
+          <div class="settings-label">外部工具<span class="hint">命令面板「打开外部工具」一键启动的程序（如你的下载器），路径留空则该动作会提示先配置</span></div>
+          <div class="path-row">
+            <input id="setTool" class="field-input" type="text" placeholder="D:\Apps\olib.exe" />
+            <button id="btnBrowseTool" class="btn-ghost">浏览…</button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">全文索引页数上限<span class="hint">每本书最多提取多少页正文；只影响之后新建的索引</span></div>
+          <select id="setIndexLimit" class="settings-select">
+            <option value="300">前 300 页</option>
+            <option value="800">前 800 页</option>
+            <option value="1500">前 1500 页（默认）</option>
+            <option value="3000">前 3000 页</option>
+            <option value="5000">前 5000 页</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="settings-group" data-sec="notes">
+        <h4>笔记</h4>
+        <div class="settings-row col">
+          <div class="settings-label">笔记编辑器<span class="hint">留空 = 自动探测 Typora → 系统默认 .md 关联程序</span></div>
+          <div class="path-row">
+            <input id="setNotesEditor" class="field-input" type="text" placeholder="C:\Program Files\Typora\Typora.exe" />
+            <button id="btnBrowseNotesEditor" class="btn-ghost">浏览…</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="settings-group" data-sec="reminders">
+        <h4>提醒</h4>
+        <div class="settings-row">
+          <div class="settings-label">沉睡提醒阈值<span class="hint">超过该天数未翻开的书会出现在沉睡清单</span></div>
+          <select id="setDormant" class="settings-select">
+            <option value="15">15 天</option>
+            <option value="30">30 天（默认）</option>
+            <option value="60">60 天</option>
+            <option value="90">90 天</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="settings-group" data-sec="library">
+        <h4>资料库</h4>
+        <div class="settings-row col">
+          <div class="settings-label">资料库位置<span class="hint">元数据、PDF 副本、封面与全部笔记都在这个文件夹，可整目录备份。更改位置时可整库搬过去，或在新位置另起一个空库；若目标已有资料库则可直接使用</span></div>
+          <div class="path-row">
+            <code id="setRootPath" class="root-path">…</code>
+            <button id="btnOpenRoot" class="btn-ghost">打开文件夹</button>
+            <button id="btnRelocate" class="btn-ghost">更改位置…</button>
+          </div>
+        </div>
+        <div class="settings-row col">
+          <div class="settings-label">自动入库·监视文件夹<span class="hint">该文件夹（含子文件夹）里新出现的 PDF 会在写入完成后自动复制入库（内容去重，原件不动），适合对接下载器的保存目录</span></div>
+          <div class="path-row">
+            <input id="setWatchFolder" class="field-input" type="text" placeholder="D:\Downloads\books" />
+            <button id="btnBrowseWatch" class="btn-ghost">浏览…</button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">启用自动入库<span class="hint">关闭后不再监视，重新开启时会补扫期间落盘的文件</span></div>
+          <input id="setWatchEnabled" type="checkbox" />
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">自动入库归入分类<span class="hint">自动入库的书统一归入该分类，便于后续整理</span></div>
+          <select id="setWatchCategory" class="settings-select"></select>
+        </div>
+      </section>
+      </div>
+    </div>
+    <div class="settings-foot">更改即时生效并保存</div>
   </dialog>
 
   <!-- 命令面板（Ctrl+K） -->
@@ -132,6 +312,14 @@
     <ul id="paletteList" class="palette-list"></ul>
     <div class="palette-foot">↑↓ 选择 · Enter 确认 · Esc 关闭</div>
   </dialog>
+
+  <!-- 批量管理操作栏（封面墙多选删除）：选中数、全选当前结果、删除、退出 -->
+  <div id="batchBar" class="batch-bar" hidden>
+    <span id="batchCount" class="batch-count">已选 0 本</span>
+    <button id="btnBatchAll" class="btn-ghost">全选当前结果</button>
+    <button id="btnBatchDel" class="btn-ghost btn-danger" disabled>删除所选</button>
+    <button id="btnBatchExit" class="btn-ghost">退出</button>
+  </div>
 
   <div id="toastBox" class="toast-box"></div>
 

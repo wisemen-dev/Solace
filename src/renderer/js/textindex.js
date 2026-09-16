@@ -1,17 +1,29 @@
-import pdfjsLib from './pdfjs.js'
+import pdfjsLib, { docParams } from './pdfjs.js'
+import { normText } from './util.js'
 
 // 全文索引：启动后（以及每次导入后）把还没有索引的书排进队列，串行提取
-// 每页文本（小写化 + 剔除全部空白，与 app.js 的 normText 同一规则），经 IPC
+// 每页文本（按 norm.js 的共享规则归一化，与标题搜索同一实现），经 IPC
 // 存进资料库的 textindex.json。搜索时标题/文件名未命中再查这里，返回首个
 // 命中页码，供卡片「全文命中」标记与预览跳页使用。
 
-let index = {}            // docId -> { pages: string[], failed: bool }
+let index = {}            // docId -> { pages: string[], failed: bool, ver: number }
 const pending = new Set() // 待提取的 docId
 const inflight = new Set()
 let draining = false
 
-// 与 app.js 的 normText 保持一致：小写化 + 剔除全部空白（含全角空格）
-const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, '')
+// 索引版本：v1（无版本号）是未配置 CMap 资源时提取的，中文 PDF 文本严重缺失；
+// v2 起补全 cMapUrl/standardFontDataUrl。旧版本索引在启动时自动重建，
+// 打不开的书（failed）除外——维持原「不反复重试」行为
+const INDEX_VERSION = 2
+
+// 提取页数上限（设置面板可调）：只影响之后新建/重建的索引，
+// 已建好的索引不因调整而失效或重建
+let pageLimit = 1500
+
+export function setIndexPageLimit (n) {
+  const v = Math.floor(Number(n))
+  if (v >= 1) pageLimit = v
+}
 
 export async function initIndex (docs) {
   try {
@@ -20,7 +32,9 @@ export async function initIndex (docs) {
     index = {}
   }
   for (const doc of docs) {
-    if (!index[doc.id] && !pending.has(doc.id) && !inflight.has(doc.id)) pending.add(doc.id)
+    const e = index[doc.id]
+    const stale = !e || (e.ver !== INDEX_VERSION && !e.failed)
+    if (stale && !pending.has(doc.id) && !inflight.has(doc.id)) pending.add(doc.id)
   }
   drain()
 }
@@ -72,18 +86,18 @@ async function drain () {
 async function extractOne (docId) {
   try {
     const buffer = await window.solace.readPreview(docId)
-    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer), ...docParams }).promise
     try {
       const pages = []
-      const max = Math.min(pdf.numPages, 1500)
+      const max = Math.min(pdf.numPages, pageLimit)
       for (let n = 1; n <= max; n++) {
         const page = await pdf.getPage(n)
         const tc = await page.getTextContent()
-        pages.push(norm(tc.items.map(i => i.str).join(' ')))
+        pages.push(normText(tc.items.map(i => i.str).join(' ')))
         page.cleanup()
       }
-      await window.solace.setTextIndex(docId, { pages })
-      index[docId] = { pages, failed: false }
+      await window.solace.setTextIndex(docId, { pages, ver: INDEX_VERSION })
+      index[docId] = { pages, failed: false, ver: INDEX_VERSION }
     } finally {
       pdf.destroy()
     }

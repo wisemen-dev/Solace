@@ -1,7 +1,16 @@
-// 归档庆祝彩蛋：在指定屏幕坐标炸开一小片纸屑粒子，约 1.2 秒后自动清理
+// 归档庆祝彩蛋：在指定屏幕坐标炸开一小片纸屑粒子，约 1.2 秒后自动清理。
+// 可在设置面板关闭（settings.confetti）：关闭后 burst 直接空操作，
+// 调用方（app.js 归档 / preview.js 读毕）无需各自判断
+let enabled = true
+
+export function setConfettiEnabled (v) {
+  enabled = !!v
+}
+
 const COLORS = ['#6ea8fe', '#ffd166', '#7bd88f', '#ef8354', '#c792ea']
 
 export function burst (x, y) {
+  if (!enabled) return
   const canvas = document.createElement('canvas')
   canvas.className = 'confetti-canvas'
   canvas.width = window.innerWidth

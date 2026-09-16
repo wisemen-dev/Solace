@@ -1,14 +1,22 @@
-import { openPreview, isPreviewOpen } from './preview.js'
-import { ensureCover, coverCache } from './covers.js'
-import { burst } from './confetti.js'
-import { initIndex, ensureQueued, textHit } from './textindex.js'
-import { initTheme, cycleTheme, themeLabel } from './theme.js'
+import { openPreview, isPreviewOpen, setResumeEnabled } from './preview.js'
+import { ensureCover, coverCache, clearCoverCache } from './covers.js'
+import { burst, setConfettiEnabled } from './confetti.js'
+import { initIndex, ensureQueued, setIndexPageLimit, textHit } from './textindex.js'
+import { initTheme, cycleTheme, themeLabel, applyTheme } from './theme.js'
+import { normText, esc, fmtRel } from './util.js'
+import { askText, askConfirm } from './dialog.js'
 import './palette.js' // 命令面板：自带事件注册，引入即生效
+import './settings.js' // 设置面板：自带事件注册，引入即生效
 
 let data = null
 const filters = { categoryId: undefined, tagId: null, keyword: '' }
 let dragDocId = null
-const DORMANT_DAYS = 30
+const DEFAULT_DORMANT_DAYS = 30
+
+// 批量管理（多选删除）：只在封面墙视图提供；勾选是纯展示标记（非真实
+// checkbox），点击语义统一走卡片的事件委托，避免双切换
+let batchMode = false
+const batchSelected = new Set()
 
 // 界面偏好（theme/viewMode），refresh 时从 data.settings 同步
 const prefs = { theme: 'auto', viewMode: 'grid' }
@@ -22,13 +30,22 @@ refresh()
 async function refresh () {
   data = await window.solace.getLibrary()
   Object.assign(prefs, data.settings || {})
+  applySettingFlags()
   initTheme(prefs)
   syncViewButton()
   renderAll()
   // 每次刷新都同步一次索引状态：缺索引的书会排进后台提取队列
   initIndex(data.documents)
-  // 开馆动画只播一次：首帧渲染完成后即解除
-  setTimeout(() => document.body.classList.remove('opening'), 1600)
+  // 开馆动画只播一次：首帧渲染完成后即解除（设置关闭时立即解除不播动画）
+  localStorage.setItem('solace-opening', prefs.openingAnimation === false ? 'off' : 'on')
+  setTimeout(() => document.body.classList.remove('opening'), prefs.openingAnimation === false ? 0 : 1600)
+}
+
+// 把可即时生效的偏好同步给各功能模块（设置面板更改时也会走这里）
+function applySettingFlags () {
+  setConfettiEnabled(prefs.confetti !== false)
+  setResumeEnabled(prefs.resumeReading !== false)
+  setIndexPageLimit(prefs.indexPageLimit || 1500)
 }
 
 function renderAll () {
@@ -197,10 +214,6 @@ function applyShelf (shelf) {
 /* ================= 主区：陈列视图 =================
    grid 封面墙 / spine 书脊 / shelf 书架（分类书堆总览，参考 Lumin） */
 
-// 搜索与排序用的归一化：小写化并剔除全部空白（含全角空格），
-// 使「rust程序」能命中标题为「Rust 程序设计语言」这类中英混排带空格的书名
-const normText = (s) => String(s || '').toLowerCase().replace(/\s+/g, '')
-
 // 分类分布图表与书架书堆共用的调色板（按顶级分类顺序循环取色）
 const PALETTE = ['#6ea8fe', '#7bd88f', '#ffd166', '#ef8354', '#c792ea', '#4dd0e1', '#f06292', '#aed581', '#ffb74d']
 const MISC_COLOR = '#5b6672'
@@ -220,6 +233,9 @@ function visibleDocs () {
 }
 
 function renderDocList () {
+  // 搜索触发书架→封面墙回退、清空搜索回到书堆，按钮状态必须跟着实际渲染走
+  syncViewButton()
+  updateBatchBar()
   const docs = visibleDocs()
   const catName = Object.fromEntries(data.categories.map(c => [c.id, c.name]))
   const tagName = Object.fromEntries(data.tags.map(t => [t.id, t.name]))
@@ -229,10 +245,15 @@ function renderDocList () {
   $('#countText').textContent = `共 ${data.documents.length} 本 · 显示 ${docs.length} 本`
 
   const grid = $('#docGrid')
+  // 封面卡片大小（设置 → 外观）：只影响封面墙，书脊/书架视图有各自固定列宽
+  const COVER_MIN = { small: '140px', medium: '172px', large: '220px' }
+  grid.style.setProperty('--cover-min', COVER_MIN[prefs.coverSize] || COVER_MIN.medium)
   // 书架（分类书堆总览）：无搜索词时生效；一搜索就回退封面墙显示结果
   const shelf = prefs.viewMode === 'shelf' && !nkw
   grid.classList.toggle('spine-mode', prefs.viewMode === 'spine' && !shelf)
   grid.classList.toggle('shelf-mode', shelf)
+  // 批量勾选只在封面墙提供（书脊无操作按钮、书架是分类书堆）
+  grid.classList.toggle('batch-mode', batchMode && !shelf)
 
   if (!docs.length) {
     grid.innerHTML = `<div class="empty">${
@@ -274,6 +295,7 @@ function renderDocList () {
     return `
     <div class="doc-card" data-id="${d.id}" draggable="true" style="--i:${i}">
       <div class="doc-cover" data-action="preview-doc" data-id="${d.id}" title="点击预览">
+        ${batchMode ? `<span class="doc-check${batchSelected.has(d.id) ? ' on' : ''}"></span>` : ''}
         <img class="doc-cover-img" data-doc-id="${d.id}" alt="" ${cached ? `src="${cached}"` : ''}/>
         ${pct ? `<div class="progress-ring${pct >= 100 ? ' done' : ''}" style="--p:${pct}" title="读到 ${pr.page}/${pr.totalPages} 页（${pct}%）"><i></i><span>${pct >= 100 ? '✓' : pct + '%'}</span></div>` : ''}
         <div class="doc-cover-ops">
@@ -283,13 +305,13 @@ function renderDocList () {
         </div>
       </div>
       <div class="doc-info">
-        <div class="doc-title" data-action="open-doc" data-id="${d.id}" title="${esc(d.title)}">${esc(d.title)}</div>
+        <div class="doc-title" data-action="preview-doc" data-id="${d.id}" title="预览《${esc(d.title)}》">${esc(d.title)}</div>
         <div class="doc-tags">${
           (hitPage ? `<span class="doc-hit" title="正文命中，点封面预览可直达第 ${hitPage} 页">全文 · 第 ${hitPage} 页</span>` : '') +
           d.tagIds.map(t => `<span class="doc-tag"># ${esc(tagName[t] || '?')}</span>`).join('')
         }</div>
         <div class="doc-meta">
-          ${d.categoryId ? esc(catName[d.categoryId] || '未知') : '未分类'} · ${fmtSize(d.size)} · 打开 ${d.openCount} 次
+          ${d.categoryId ? esc(catName[d.categoryId] || '未知') : '未分类'} · ${fmtSize(d.size)} · 翻开 ${d.openCount} 次
         </div>
       </div>
     </div>`
@@ -309,14 +331,22 @@ const VIEW_ORDER = ['grid', 'spine', 'shelf']
 const VIEW_LABEL = { grid: '📚 封面', spine: '📖 书脊', shelf: '🏛 书架' }
 const VIEW_TITLE = { grid: '切换到书脊视图', spine: '切换到书架（分类书堆）', shelf: '切换到封面墙' }
 
+// 实际渲染的视图：书架是分类总览页，搜索中自动回退封面墙显示结果
+// （prefs.viewMode 保持书架，清空搜索即回到书堆）
+function effectiveView () {
+  return prefs.viewMode === 'shelf' && normText(filters.keyword) ? 'grid' : prefs.viewMode
+}
+
 function syncViewButton () {
+  const v = effectiveView()
   const btn = $('#btnView')
-  btn.textContent = VIEW_LABEL[prefs.viewMode] || VIEW_LABEL.grid
-  btn.title = VIEW_TITLE[prefs.viewMode] || ''
+  btn.textContent = VIEW_LABEL[v] || VIEW_LABEL.grid
+  btn.title = VIEW_TITLE[v] || ''
 }
 
 $('#btnView').addEventListener('click', async () => {
-  const next = VIEW_ORDER[(VIEW_ORDER.indexOf(prefs.viewMode) + 1) % VIEW_ORDER.length]
+  exitBatch() // 批量管理只在封面墙提供：切视图即退出
+  const next = VIEW_ORDER[(VIEW_ORDER.indexOf(effectiveView()) + 1) % VIEW_ORDER.length]
   prefs.viewMode = next
   if (next === 'shelf') {
     // 书架是分类总览：进来时清空筛选，与 Lumin「返回书架退出搜索态」一致
@@ -425,8 +455,9 @@ function pileStackHtml (books) {
     const [dx, dy, rot, sc] = slots[slot]
     const depth = n > 1 ? slot / (n - 1) : 1 // 越靠上越亮
     const br = (1 - 0.22 * (1 - depth)).toFixed(2)
+    // draggable=false：书堆卡携带的是分类 id，img 原生拖拽会伪装成文档拖拽误导归档
     return `
-    <img class="doc-cover-img pile-book${slot === n - 1 ? ' top' : ''}" data-doc-id="${d.id}" alt=""
+    <img class="doc-cover-img pile-book${slot === n - 1 ? ' top' : ''}" data-doc-id="${d.id}" alt="" draggable="false"
          style="--dx:${dx}px; --dy:${dy}px; --rot:${rot}deg; --sc:${sc}; --br:${br}"
          title="${esc(d.title)}"/>`
   }).join('')
@@ -449,6 +480,91 @@ async function openPile (key) {
   try { await window.solace.updateSettings({ viewMode: 'grid' }) } catch { /* 下次启动仍为书架也可接受 */ }
   $('#docGrid').scrollTo({ top: 0 })
 }
+
+/* ================= 批量管理（封面墙多选删除） ================= */
+
+function enterBatch () {
+  batchMode = true
+  $('#btnBatch').textContent = '✕ 退出批量'
+  $('#batchBar').hidden = false
+  renderDocList()
+}
+
+function exitBatch () {
+  if (!batchMode) return
+  batchMode = false
+  batchSelected.clear()
+  $('#btnBatch').textContent = '☑ 批量'
+  $('#batchBar').hidden = true
+  renderDocList()
+}
+
+$('#btnBatch').addEventListener('click', () => {
+  if (batchMode) { exitBatch(); return }
+  if (effectiveView() !== 'grid') { toast('批量管理仅在封面墙视图可用，请先切换到「📚 封面」'); return }
+  enterBatch()
+})
+$('#btnBatchExit').addEventListener('click', exitBatch)
+
+// 同步操作栏：选中数、删除按钮可用性、全选/取消全选文案。
+// 顺带清掉已不存在的选中项（删书/切库后残留的过期 id）
+function updateBatchBar () {
+  for (const id of [...batchSelected]) {
+    if (!data || !data.documents.some(d => d.id === id)) batchSelected.delete(id)
+  }
+  $('#batchCount').textContent = `已选 ${batchSelected.size} 本`
+  $('#btnBatchDel').disabled = batchSelected.size === 0
+  const visible = visibleDocs().map(d => d.id)
+  const allSel = visible.length > 0 && visible.every(id => batchSelected.has(id))
+  $('#btnBatchAll').textContent = allSel ? '取消全选' : '全选当前结果'
+}
+
+// 原地切换勾选标记，不整卡重绘（滚动位置与封面懒加载都不动）
+function toggleBatchSel (id) {
+  if (batchSelected.has(id)) batchSelected.delete(id)
+  else batchSelected.add(id)
+  const el = document.querySelector(`.doc-card[data-id="${id}"] .doc-check`)
+  if (el) el.classList.toggle('on', batchSelected.has(id))
+  updateBatchBar()
+}
+
+$('#btnBatchAll').addEventListener('click', () => {
+  const visible = visibleDocs().map(d => d.id)
+  const allSel = visible.length > 0 && visible.every(id => batchSelected.has(id))
+  if (allSel) visible.forEach(id => batchSelected.delete(id))
+  else visible.forEach(id => batchSelected.add(id))
+  renderDocList()
+})
+
+// 整批统一一次「是否同时删笔记」勾选（沿用单个删除的确认框语义，默认勾选）
+$('#btnBatchDel').addEventListener('click', async () => {
+  const ids = [...batchSelected].filter(id => data.documents.some(d => d.id === id))
+  if (!ids.length) return
+  const res = await askConfirm({
+    title: `批量删除 ${ids.length} 本文档`,
+    text: '所选书籍将从书架移除，库内副本与封面一并删除（原文件不受影响）。',
+    checkLabel: '同时删除所选书籍的全部笔记（移入系统回收站）',
+    okText: '删除'
+  })
+  if (!res) return
+  let removed = 0
+  const keptNotes = []
+  const leftovers = new Set()
+  for (const id of ids) {
+    try {
+      const out = await window.solace.removeDoc(id, { keepNotes: !res.checked })
+      removed++
+      if (out.notesKeptTo) keptNotes.push(out.notesKeptTo)
+      for (const l of out.leftovers || []) leftovers.add(l)
+    } catch { /* 过期选中项（已被删除）等，跳过 */ }
+  }
+  batchSelected.clear()
+  refresh()
+  const parts = [`已删除 ${removed} 本`]
+  if (keptNotes.length) parts.push(`${keptNotes.length} 本的笔记保留在资料库 notes/ 下`)
+  if (leftovers.size) parts.push(`${leftovers.size} 个文件正被占用，重启应用后自动清理`)
+  toast(parts.join('；'))
+})
 
 /* ================= 事件：全局委托 ================= */
 
@@ -517,6 +633,7 @@ document.body.addEventListener('click', async (e) => {
       }
       case 'rename-cat': {
         const cat = data.categories.find(c => c.id === id)
+        if (!cat) break
         const name = await askText('重命名分类', cat.name)
         if (name && name !== cat.name) { await window.solace.renameCategory(id, name); refresh() }
         break
@@ -538,6 +655,8 @@ document.body.addEventListener('click', async (e) => {
         break
       }
       case 'preview-doc': {
+        // 批量模式下点击卡片 = 切换选中，不打开预览
+        if (batchMode) { toggleBatchSel(id); break }
         const doc = data.documents.find(d => d.id === id)
         // 搜索中点开的书：全文命中时直接跳到首个命中页
         const kw = normText(filters.keyword)
@@ -552,14 +671,25 @@ document.body.addEventListener('click', async (e) => {
       }
       case 'edit-doc': {
         const doc = data.documents.find(d => d.id === id)
-        await openEditDialog(doc)
+        if (doc) await openEditDialog(doc)
         break
       }
       case 'del-doc': {
         const doc = data.documents.find(d => d.id === id)
-        if (confirm(`删除《${doc.title}》？\n将移除库内副本与封面（原文件不受影响）。`)) {
-          await window.solace.removeDoc(id)
+        if (!doc) break
+        const res = await askConfirm({
+          title: '删除文档',
+          text: `《${doc.title}》将从书架移除，库内副本与封面一并删除（原文件不受影响）。`,
+          checkLabel: '同时删除这本书的全部笔记（移入系统回收站）',
+          okText: '删除'
+        })
+        if (res) {
+          const out = await window.solace.removeDoc(id, { keepNotes: !res.checked })
           refresh()
+          const parts = []
+          if (out.notesKeptTo) parts.push(`笔记已保留在资料库 notes/${out.notesKeptTo}/`)
+          if (out.leftovers && out.leftovers.length) parts.push(`${out.leftovers.join('、')} 正被其他程序占用，重启应用后自动清理`)
+          toast(`《${out.title}》已删除${parts.length ? '；' + parts.join('；') : ''}`)
         }
         break
       }
@@ -572,8 +702,12 @@ document.body.addEventListener('click', async (e) => {
 /* ================= 拖拽：卡片 → 分类归档，分类 → 分类换父 ================= */
 
 $('#docGrid').addEventListener('dragstart', (e) => {
+  if (batchMode) return // 批量选择中禁用拖拽归档，避免与勾选点击混淆
   const card = e.target.closest('.doc-card')
   if (!card) return
+  // 书架（分类书堆）卡的 data-id 是分类 id，不是文档 id，不参与归档拖拽；
+  // 堆内封面 img 的原生拖拽已在生成处禁用，这里再拦一道防回归
+  if (card.classList.contains('pile-card')) return
   dragDocId = card.dataset.id
   e.dataTransfer.setData('application/x-solace-doc', dragDocId)
   e.dataTransfer.effectAllowed = 'move'
@@ -609,8 +743,17 @@ function dropTargetOk (li, type) {
 
 catList.addEventListener('dragover', (e) => {
   const li = e.target.closest('li[data-action="filter-cat"]')
-  const isDoc = dragDocId && e.dataTransfer.types.includes('application/x-solace-doc')
-  const isCat = dragCatId && e.dataTransfer.types.includes('application/x-solace-cat')
+  const types = e.dataTransfer.types
+  const isDoc = dragDocId && types.includes('application/x-solace-doc')
+  const isCat = dragCatId && types.includes('application/x-solace-cat')
+  // 外部文件拖到分类/未分类上：提示可「导入并归档到此处」（「全部」不承载归档）
+  if (!isDoc && !isCat && types.includes('Files')) {
+    if (!li || li.dataset.id === 'all') return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    li.classList.add('drop-hint')
+    return
+  }
   if ((!isDoc && !isCat) || !dropTargetOk(li, isDoc ? 'doc' : 'cat')) return
   e.preventDefault()
   e.dataTransfer.dropEffect = 'move'
@@ -671,10 +814,14 @@ catList.addEventListener('drop', async (e) => {
 /* ================= 事件：导入与搜索 ================= */
 
 $('#btnImport').addEventListener('click', async () => {
-  const { imported, errors } = await window.solace.importDialog()
-  imported.forEach(d => ensureQueued(d.id))
-  notifyImport(imported, errors)
-  refresh()
+  try {
+    const { imported, errors, duplicates } = await window.solace.importDialog()
+    imported.forEach(d => ensureQueued(d.id))
+    notifyImport(imported, errors, duplicates)
+    refresh()
+  } catch (err) {
+    toast(`导入失败：${err.message || err}`)
+  }
 })
 
 $('#searchInput').addEventListener('input', (e) => {
@@ -713,10 +860,52 @@ window.addEventListener('solace-palette', (e) => {
     $('#searchInput').value = filters.keyword
     renderAll()
   } else if (d.type === 'action') {
-    const map = { import: '#btnImport', 'new-cat': '#btnAddCat', 'new-tag': '#btnAddTag', 'save-shelf': '#btnAddShelf', stats: '#btnStats', dormant: '#btnDormant' }
+    if (d.name === 'tool') {
+      window.solace.launchTool().catch(err => toast(`启动失败：${err.message || err}`))
+      return
+    }
+    const map = { import: '#btnImport', 'new-cat': '#btnAddCat', 'new-tag': '#btnAddTag', 'save-shelf': '#btnAddShelf', stats: '#btnStats', dormant: '#btnDormant', settings: '#btnSettings' }
     const btn = map[d.name] && $(map[d.name])
     if (btn) btn.click()
   }
+})
+
+// 设置面板（settings.js）派发的更改：更新本地偏好并做对应联动。
+// 与顶栏快捷开关同源同向——无论从哪边改，都以事件为唯一联动入口
+window.addEventListener('solace-settings', (e) => {
+  const patch = e.detail || {}
+  Object.assign(prefs, patch)
+  if ('theme' in patch) applyTheme(prefs)
+  if ('viewMode' in patch || 'coverSize' in patch) renderAll()
+  if ('dormantDays' in patch) updateDormantBadge()
+  if ('confetti' in patch || 'resumeReading' in patch || 'indexPageLimit' in patch) applySettingFlags()
+  if ('openingAnimation' in patch) {
+    localStorage.setItem('solace-opening', prefs.openingAnimation === false ? 'off' : 'on')
+  }
+})
+
+// 资料库位置切换（settings.js 派发）：所有内存态按新库重建——关闭预览
+// （旧库的书在新库不存在，翻页进度会全部写失败）、封面缓存清空、
+// 筛选复位（旧库的分类/标签 id 在新库无意义）、偏好与索引随 refresh 重载
+window.addEventListener('solace-library-moved', async (e) => {
+  const res = e.detail || {}
+  window.closePreview?.()
+  clearCoverCache()
+  exitBatch() // 旧库的选中 id 在新库无意义
+  filters.categoryId = undefined
+  filters.tagId = null
+  filters.keyword = ''
+  $('#searchInput').value = ''
+  await refresh()
+  const head = {
+    moved: '资料库已整体移动到新位置',
+    adopted: `已切换到该位置的资料库（${res.docCount} 本）`,
+    created: '已在新位置创建空资料库'
+  }[res.mode] || '资料库位置已更改'
+  const tail = res.mode === 'moved' && res.oldRemoved === false
+    ? `；旧位置 ${res.oldLocation} 有文件被占用未删净，可稍后手动删除`
+    : ''
+  toast(head + tail)
 })
 
 // 文件拖入导入（应用内部拖拽归档不触发导入）
@@ -729,15 +918,35 @@ window.addEventListener('drop', async (e) => {
   const pdfs = files.filter(f => f.name.toLowerCase().endsWith('.pdf'))
   if (!pdfs.length) return
   const paths = pdfs.map(f => window.solace.pathForFile(f))
-  const { imported, errors } = await window.solace.importPaths(paths)
+  // 落点在具体分类/未分类条目上时：导入后直接归档到该分类（拖到哪归到哪）
+  const li = document.elementFromPoint(e.clientX, e.clientY)?.closest('#catList li[data-action="filter-cat"]')
+  const dropCatId = li && li.dataset.id !== 'all' && li.dataset.id !== 'none' ? li.dataset.id : null
+  let result
+  try {
+    result = await window.solace.importPaths(paths)
+  } catch (err) {
+    toast(`导入失败：${err.message || err}`)
+    return
+  }
+  const { imported, errors, duplicates } = result
+  if (dropCatId && imported.length) {
+    for (const d of imported) {
+      try { await window.solace.updateDoc(d.id, { categoryId: dropCatId }) } catch { /* 归档失败不掩盖导入结果 */ }
+    }
+  }
   imported.forEach(d => ensureQueued(d.id))
-  notifyImport(imported, errors)
+  notifyImport(imported, errors, duplicates, dropCatId)
   refresh()
 })
 
-function notifyImport (imported, errors) {
+function notifyImport (imported, errors, duplicates = [], dropCatId = null) {
   const parts = []
-  if (imported.length) parts.push(`已入库 ${imported.length} 本`)
+  if (imported.length) {
+    parts.push(dropCatId
+      ? `已入库 ${imported.length} 本并归档到「${catNameOf(dropCatId)}」`
+      : `已入库 ${imported.length} 本`)
+  }
+  if (duplicates.length) parts.push(`跳过重复 ${duplicates.length} 本（内容已在库中）：${duplicates.map(x => `《${x.title}》`).join('、')}`)
   if (errors.length) parts.push(`${errors.length} 个失败：${errors.map(x => x.file).join('、')}`)
   if (parts.length) toast(parts.join('；'))
 }
@@ -767,36 +976,29 @@ $('#btnEditSave').addEventListener('click', async () => {
     categoryId: $('#editCat').value || null,
     tagIds: [...$('#editTags').querySelectorAll('input:checked')].map(i => i.value)
   }
-  await window.solace.updateDoc(editingId, patch)
+  try {
+    await window.solace.updateDoc(editingId, patch)
+  } catch (err) {
+    toast(`保存失败：${err.message || err}`)
+    return
+  }
   $('#editDialog').close()
   refresh()
 })
 
 $('#btnEditCancel').addEventListener('click', () => $('#editDialog').close())
 
-/* ================= 通用文本输入对话框 ================= */
-
-function askText (title, initial = '') {
-  return new Promise((resolve) => {
-    const dlg = $('#inputDialog')
-    const input = $('#inputDialogInput')
-    $('#inputDialogTitle').textContent = title
-    input.value = initial
-    let settled = false
-    $('#inputDialogOk').onclick = () => { settled = true; dlg.close(); resolve(input.value.trim()) }
-    $('#inputDialogCancel').onclick = () => { settled = true; dlg.close(); resolve(null) }
-    dlg.onclose = () => { if (!settled) resolve(null) }
-    dlg.showModal()
-    input.focus()
-    input.select()
-  })
-}
-
 /* ================= 阅读足迹与沉睡提醒 ================= */
 
-// 沉睡判定：以「最近一次打开」（从未打开则用入库时间）距今超过 30 天为准
+// 沉睡判定：以「最近一次打开」（从未打开则用入库时间）距今超过阈值天数为准
+// （阈值可在设置面板调整，默认 30 天）
+function dormantDays () {
+  const n = Math.floor(Number(prefs.dormantDays))
+  return n >= 1 ? n : DEFAULT_DORMANT_DAYS
+}
+
 function dormantDocs () {
-  const cutoff = Date.now() - DORMANT_DAYS * 86400000
+  const cutoff = Date.now() - dormantDays() * 86400000
   return data.documents
     .filter(d => new Date(d.openedAt || d.addedAt).getTime() < cutoff)
     .sort((a, b) => new Date(a.openedAt || a.addedAt) - new Date(b.openedAt || b.addedAt))
@@ -807,7 +1009,7 @@ function updateDormantBadge () {
   const btn = $('#btnDormant')
   btn.hidden = n === 0
   $('#dormantCount').textContent = n
-  btn.title = `${n} 本书已沉睡超过 ${DORMANT_DAYS} 天`
+  btn.title = `${n} 本书已沉睡超过 ${dormantDays()} 天`
 }
 
 function renderCategoryChart () {
@@ -853,7 +1055,7 @@ function renderCategoryChart () {
         <li title="${esc(s.name)}">
           <i style="background:${s.color}"></i>
           <span class="n">${esc(s.name)}</span>
-          <span class="v">${s.books} 本 · 打开 ${s.opens} 次</span>
+          <span class="v">${s.books} 本 · 翻开 ${s.opens} 次</span>
         </li>`).join('')}
     </ul>`
 }
@@ -865,10 +1067,11 @@ function renderStats () {
   const inDays = days => (data.history || [])
     .filter(h => now - new Date(h.at).getTime() <= days * 86400000).length
   const dormant = dormantDocs()
+  $('#statsDormantHint').textContent = `超过 ${dormantDays()} 天未读`
 
   $('#statsOverview').innerHTML = `
     <span class="stats-chip"><b>${docs.length}</b>本藏书</span>
-    <span class="stats-chip"><b>${totalOpens}</b>次累计打开</span>
+    <span class="stats-chip"><b>${totalOpens}</b>次累计翻开</span>
     <span class="stats-chip"><b>${inDays(7)}</b>次近 7 天</span>
     <span class="stats-chip"><b>${inDays(30)}</b>次近 30 天</span>
     <span class="stats-chip"><b>${dormant.length}</b>本沉睡中</span>`
@@ -882,15 +1085,16 @@ function renderStats () {
   const recent = (data.history || []).slice(-8).reverse()
   $('#statsRecent').innerHTML = recent.length
     ? recent.map(h =>
-        `<li><span class="t">《${esc(titleOf(h.docId))}》</span><span class="when">${fmtRel(h.at)}</span></li>`
+        // type='read' 是预览翻页产生的足迹，标注来源区分外部打开（旧数据无 type）
+        `<li><span class="t">《${esc(titleOf(h.docId))}》</span><span class="when">${h.type === 'read' ? '预览 · ' : ''}${fmtRel(h.at)}</span></li>`
       ).join('')
-    : '<li class="empty-line">还没有打开记录，从封面或「打开」开始第一页吧</li>'
+    : '<li class="empty-line">还没有阅读记录，从封面预览或「打开」开始第一页吧</li>'
 
   $('#statsDormant').innerHTML = dormant.length
     ? dormant.slice(0, 12).map(d => {
         const last = d.openedAt || d.addedAt
         const days = Math.floor((now - new Date(last).getTime()) / 86400000)
-        const reason = d.openCount === 0 ? `入库 ${days} 天，还没翻开过` : `${days} 天没打开了`
+        const reason = d.openCount === 0 ? `入库 ${days} 天，还没翻开过` : `${days} 天没翻开了`
         return `<li><span class="t">《${esc(d.title)}》</span><span class="reason">${reason}</span>` +
           `<button class="btn-ghost" data-action="open-doc" data-id="${d.id}">打开</button></li>`
       }).join('') + (dormant.length > 12 ? `<li class="empty-line">…还有 ${dormant.length - 12} 本</li>` : '')
@@ -913,14 +1117,34 @@ async function closePreviewAndRefresh () {
 $('#btnPreviewClose').addEventListener('click', closePreviewAndRefresh)
 $('#btnPreviewExternal').addEventListener('click', async () => {
   if (window.currentPreviewId) {
-    await window.solace.openDoc(window.currentPreviewId)
-    refresh()
+    try {
+      await window.solace.openDoc(window.currentPreviewId)
+      refresh()
+    } catch (err) {
+      window.toast?.(`打开失败：${err.message || err}`)
+    }
   }
 })
 
 // 预览打开时按 Esc 关闭（对话框之外的 Esc；有对话框开着时先关对话框）
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && isPreviewOpen() && !document.querySelector('dialog[open]')) closePreviewAndRefresh()
+})
+
+/* ================= 自动入库事件（主进程推送） ================= */
+
+// 连续落盘会推送多次：刷新做 400ms 防抖合并；toast 文案由主进程聚合成批
+let watchRefreshTimer = null
+window.solace.onWatchEvent?.((ev) => {
+  if (ev.type === 'imported') {
+    ev.docs.forEach(d => ensureQueued(d.id))
+    const names = ev.docs.slice(0, 3).map(d => `《${d.title}》`).join('、')
+    toast(`自动入库 ${ev.docs.length} 本：${names}${ev.docs.length > 3 ? '…' : ''}`)
+    clearTimeout(watchRefreshTimer)
+    watchRefreshTimer = setTimeout(() => refresh(), 400)
+  } else if (ev.type === 'error') {
+    toast(`自动入库：${ev.message}`)
+  }
 })
 
 /* ================= 工具函数 ================= */
@@ -952,12 +1176,6 @@ window.addEventListener('solace-index-doc', () => {
   if (normText(filters.keyword)) renderDocList()
 })
 
-function esc (s) {
-  return String(s).replace(/[&<>"']/g, c => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[c]))
-}
-
 function fmtSize (n) {
   if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB'
   return Math.max(1, Math.round(n / 1024)) + ' KB'
@@ -965,16 +1183,4 @@ function fmtSize (n) {
 
 function fmtDate (iso) {
   return iso ? new Date(iso).toLocaleDateString('zh-CN') : '—'
-}
-
-function fmtRel (iso) {
-  if (!iso) return '—'
-  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
-  if (m < 1) return '刚刚'
-  if (m < 60) return `${m} 分钟前`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h} 小时前`
-  const d = Math.floor(h / 24)
-  if (d < 30) return `${d} 天前`
-  return new Date(iso).toLocaleDateString('zh-CN')
 }
