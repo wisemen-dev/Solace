@@ -236,6 +236,7 @@ function renderDocList () {
   // 搜索触发书架→封面墙回退、清空搜索回到书堆，按钮状态必须跟着实际渲染走
   syncViewButton()
   updateBatchBar()
+  updateBatchCategoryOptions()
   const docs = visibleDocs()
   const catName = Object.fromEntries(data.categories.map(c => [c.id, c.name]))
   const tagName = Object.fromEntries(data.tags.map(t => [t.id, t.name]))
@@ -521,9 +522,19 @@ function updateBatchBar () {
   }
   $('#batchCount').textContent = `已选 ${batchSelected.size} 本`
   $('#btnBatchDel').disabled = batchSelected.size === 0
+  $('#batchCategory').disabled = batchSelected.size === 0
   const visible = visibleDocs().map(d => d.id)
   const allSel = visible.length > 0 && visible.every(id => batchSelected.has(id))
   $('#btnBatchAll').textContent = allSel ? '取消全选' : '全选当前结果'
+}
+
+// 归档下拉的选项随分类树重建（DFS 顺序、缩进体现层级，不看折叠状态），
+// 批量中经侧栏增删分类后随下一次渲染如实刷新
+function updateBatchCategoryOptions () {
+  $('#batchCategory').innerHTML = '<option value="">归档到分类…</option>' +
+    orderedCategories(false).map(({ cat: c, depth }) =>
+      `<option value="${c.id}">${'　'.repeat(depth)}${esc(c.name)}</option>`
+    ).join('') + '<option value="none">未分类</option>'
 }
 
 // 原地切换勾选标记，不整卡重绘（滚动位置与封面懒加载都不动）
@@ -541,6 +552,32 @@ $('#btnBatchAll').addEventListener('click', () => {
   if (allSel) visible.forEach(id => batchSelected.delete(id))
   else visible.forEach(id => batchSelected.add(id))
   renderDocList()
+})
+
+// 批量归档：与拖拽单本归档同语义（直接执行不确认，低风险可逆）。
+// 已在目标分类的选中项跳过并计入提示；执行后保留选中便于连续调整
+$('#batchCategory').addEventListener('change', async (e) => {
+  const v = e.target.value
+  e.target.value = '' // 下拉只当菜单用，用完即归位到占位项
+  if (!v || !batchMode || !batchSelected.size) return
+  const target = v === 'none' ? null : v
+  if (target && !data.categories.some(c => c.id === target)) { toast('该分类已不存在，请重试'); return }
+  const name = target ? catNameOf(target) : '未分类'
+  const ids = [...batchSelected].filter(id => {
+    const d = data.documents.find(x => x.id === id)
+    return d && d.categoryId !== target
+  })
+  if (!ids.length) { toast(`所选书籍已全部在「${name}」`); return }
+  let done = 0
+  for (const id of ids) {
+    try { await window.solace.updateDoc(id, { categoryId: target }); done++ }
+    catch { /* 过期选中项（已被删除）等，跳过 */ }
+  }
+  refresh()
+  const skipped = ids.length - done
+  toast(skipped > 0
+    ? `已将 ${done} 本归档到「${name}」（${skipped} 本处理失败）`
+    : `已将 ${done} 本归档到「${name}」`)
 })
 
 // 整批统一一次「是否同时删笔记」勾选（沿用单个删除的确认框语义，默认勾选）

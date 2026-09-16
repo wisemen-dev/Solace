@@ -313,10 +313,13 @@
     <div class="palette-foot">↑↓ 选择 · Enter 确认 · Esc 关闭</div>
   </dialog>
 
-  <!-- 批量管理操作栏（封面墙多选删除）：选中数、全选当前结果、删除、退出 -->
+  <!-- 批量管理操作栏（封面墙多选）：选中数、全选、归档到分类、删除、退出 -->
   <div id="batchBar" class="batch-bar" hidden>
     <span id="batchCount" class="batch-count">已选 0 本</span>
     <button id="btnBatchAll" class="btn-ghost">全选当前结果</button>
+    <select id="batchCategory" class="batch-select" disabled>
+      <option value="" selected>归档到分类…</option>
+    </select>
     <button id="btnBatchDel" class="btn-ghost btn-danger" disabled>删除所选</button>
     <button id="btnBatchExit" class="btn-ghost">退出</button>
   </div>
