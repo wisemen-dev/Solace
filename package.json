@@ -1,7 +1,7 @@
 {
   "name": "solace",
   "productName": "Solace",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Solace — 本地 PDF 私人图书馆：集中管理、手动分类、轻量预览。",
   "author": "Molly",
   "license": "MIT",
@@ -41,6 +41,7 @@
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
+    "lxgw-wenkai-lite-webfont": "^1.7.0",
     "pdfjs-dist": "^4.10.38"
   },
   "allowScripts": {
