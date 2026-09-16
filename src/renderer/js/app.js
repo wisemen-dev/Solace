@@ -23,6 +23,11 @@ const batchSelected = new Set()
 // 否则每敲一个键整个书架就重新入场一次
 let entrancePending = true
 
+// 「← 书架」回退标记：仅当封面态由书架点书堆（openPile）进入时为真。
+// 其他进入路径（侧栏分类/命令面板/收藏夹）不设——用户主动换了浏览
+// 路径，回退语义不成立；任何切换视图/筛选的动作都会将其清除
+let fromShelf = false
+
 // 界面偏好（theme/viewMode），refresh 时从 data.settings 同步
 const prefs = { theme: 'auto', viewMode: 'grid' }
 
@@ -212,6 +217,7 @@ function applyShelf (shelf) {
   filters.categoryId = f.categoryId === undefined ? undefined : f.categoryId
   filters.tagId = f.tagId || null
   filters.keyword = f.keyword || ''
+  fromShelf = false // 收藏夹是明确的筛选跳转：回退语义失效
   entrancePending = true // 应用收藏夹 = 明确的筛选切换
   $('#searchInput').value = filters.keyword
   renderAll()
@@ -241,6 +247,8 @@ function visibleDocs () {
 function renderDocList () {
   // 搜索触发书架→封面墙回退、清空搜索回到书堆，按钮状态必须跟着实际渲染走
   syncViewButton()
+  // 回退按钮显隐与渲染同步（防御：即使某路径漏清标记也不会残留按钮）
+  $('#btnBackShelf').hidden = !(fromShelf && effectiveView() === 'grid')
   updateBatchBar()
   updateBatchCategoryOptions()
   const entrance = entrancePending // 本次渲染消费一次入场标记
@@ -358,6 +366,7 @@ function syncViewButton () {
 
 $('#btnView').addEventListener('click', async () => {
   exitBatch() // 批量管理只在封面墙提供：切视图即退出
+  fromShelf = false // 用户主动切视图：回退语义失效
   entrancePending = true // 明确的视图切换：播放入场编排
   const next = VIEW_ORDER[(VIEW_ORDER.indexOf(effectiveView()) + 1) % VIEW_ORDER.length]
   prefs.viewMode = next
@@ -488,12 +497,31 @@ function docsInCategory (catId) {
 async function openPile (key) {
   filters.categoryId = key === 'none' ? null : key
   prefs.viewMode = 'grid'
+  fromShelf = true // 由书堆进入：允许一步回退到书架总览
   entrancePending = true // 点书堆进入封面墙：播放入场编排
   syncViewButton()
   renderAll()
   try { await window.solace.updateSettings({ viewMode: 'grid' }) } catch { /* 下次启动仍为书架也可接受 */ }
   $('#docGrid').scrollTo({ top: 0 })
 }
+
+// 一步回退到书架总览：清筛选与搜索（书架本就是总览态）、播入场、落库
+function backToShelf () {
+  if (!fromShelf) return
+  fromShelf = false
+  prefs.viewMode = 'shelf'
+  filters.categoryId = undefined
+  filters.tagId = null
+  filters.keyword = ''
+  $('#searchInput').value = ''
+  entrancePending = true
+  syncViewButton()
+  renderAll()
+  window.solace.updateSettings({ viewMode: 'shelf' }).catch(() => {})
+  $('#docGrid').scrollTo({ top: 0 })
+}
+
+$('#btnBackShelf').addEventListener('click', backToShelf)
 
 /* ================= 批量管理（封面墙多选删除） ================= */
 
@@ -631,6 +659,7 @@ document.body.addEventListener('click', async (e) => {
     switch (action) {
       case 'filter-cat': {
         filters.categoryId = id === 'all' ? undefined : id === 'none' ? null : id
+        fromShelf = false // 侧栏分类不是书堆入口：不提供回退
         entrancePending = true // 明确的筛选切换：播放入场编排
         // 书架总览不显示单本书：点了分类就切到封面墙看书
         if (prefs.viewMode === 'shelf') {
@@ -683,6 +712,7 @@ document.body.addEventListener('click', async (e) => {
       }
       case 'filter-tag': {
         filters.tagId = filters.tagId === id ? null : id
+        fromShelf = false
         entrancePending = true
         renderAll()
         break
@@ -913,6 +943,7 @@ window.addEventListener('solace-palette', (e) => {
     filters.categoryId = d.categoryId === undefined ? undefined : d.categoryId
     filters.tagId = d.tagId || null
     filters.keyword = d.keyword || ''
+    fromShelf = false // 命令面板筛选跳转：不提供回退
     entrancePending = true // 命令面板的筛选跳转：播放入场编排
     $('#searchInput').value = filters.keyword
     renderAll()
@@ -933,7 +964,7 @@ window.addEventListener('solace-settings', (e) => {
   const patch = e.detail || {}
   Object.assign(prefs, patch)
   if ('theme' in patch) applyTheme(prefs)
-  if ('viewMode' in patch) entrancePending = true
+  if ('viewMode' in patch) { entrancePending = true; fromShelf = false }
   if ('viewMode' in patch || 'coverSize' in patch) renderAll()
   if ('dormantDays' in patch) updateDormantBadge()
   if ('confetti' in patch || 'resumeReading' in patch || 'indexPageLimit' in patch) applySettingFlags()
@@ -950,6 +981,7 @@ window.addEventListener('solace-library-moved', async (e) => {
   window.closePreview?.()
   clearCoverCache()
   exitBatch() // 旧库的选中 id 在新库无意义
+  fromShelf = false // 新库里「从书架进入」的上下文无意义
   filters.categoryId = undefined
   filters.tagId = null
   filters.keyword = ''
@@ -1184,9 +1216,13 @@ $('#btnPreviewExternal').addEventListener('click', async () => {
   }
 })
 
-// 预览打开时按 Esc 关闭（对话框之外的 Esc；有对话框开着时先关对话框）
+// 预览打开时按 Esc 关闭（对话框之外的 Esc；有对话框开着时先关对话框）。
+// 预览/对话框都不在前台时，若处于「书堆进入的封面态」则 Esc 回退书架
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && isPreviewOpen() && !document.querySelector('dialog[open]')) closePreviewAndRefresh()
+  if (e.key !== 'Escape') return
+  const dialogOpen = !!document.querySelector('dialog[open]')
+  if (isPreviewOpen() && !dialogOpen) { closePreviewAndRefresh(); return }
+  if (!dialogOpen && fromShelf) backToShelf()
 })
 
 /* ================= 自动入库事件（主进程推送） ================= */

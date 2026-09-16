@@ -52,6 +52,8 @@
     <main class="main">
       <header class="topbar">
         <input id="searchInput" class="search" type="search" placeholder="搜索标题或全文…" />
+        <!-- 从书架点书堆进入封面后出现：一步回书架总览（Esc 同效），免经书脊两跳 -->
+        <button id="btnBackShelf" class="btn-ghost" hidden title="返回书架总览（Esc）">← 书架</button>
         <button id="btnPalette" class="btn-ghost" title="命令面板（Ctrl+K）">⌘K</button>
         <button id="btnView" class="btn-ghost" title="切换陈列视图">📚 封面</button>
         <button id="btnBatch" class="btn-ghost" title="批量管理（多选删除）">☑ 批量</button>
