@@ -566,9 +566,14 @@ function updateBatchBar () {
   $('#btnBatchAll').textContent = allSel ? '取消全选' : '全选当前结果'
 }
 
-// 归档下拉的选项随分类树重建（DFS 顺序、缩进体现层级，不看折叠状态），
-// 批量中经侧栏增删分类后随下一次渲染如实刷新
+// 归档下拉的选项随分类树重建（DFS 顺序、缩进体现层级，不看折叠状态）。
+// 用「分类树签名」门控：数据刷新（索引完成/自动入库等触发的重渲染）但
+// 分类树没变时跳过重建——否则用户正打开的下拉会被击落、选中项被重置
+let batchCatSig = ''
 function updateBatchCategoryOptions () {
+  const sig = data.categories.map(c => `${c.id}:${c.parentId || ''}:${c.name}`).join('|')
+  if (sig === batchCatSig) return
+  batchCatSig = sig
   $('#batchCategory').innerHTML = '<option value="">归档到分类…</option>' +
     orderedCategories(false).map(({ cat: c, depth }) =>
       `<option value="${c.id}">${'　'.repeat(depth)}${esc(c.name)}</option>`
@@ -1217,9 +1222,13 @@ $('#btnPreviewExternal').addEventListener('click', async () => {
 })
 
 // 预览打开时按 Esc 关闭（对话框之外的 Esc；有对话框开着时先关对话框）。
-// 预览/对话框都不在前台时，若处于「书堆进入的封面态」则 Esc 回退书架
+// 预览/对话框都不在前台时，若处于「书堆进入的封面态」则 Esc 回退书架。
+// 输入控件内的 Esc 让位给原生行为（搜索框还原搜索词、下拉收起）——
+// 否则一次按键既还原输入又跳回书架，双动作太突然
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return
+  const tag = e.target && e.target.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
   const dialogOpen = !!document.querySelector('dialog[open]')
   if (isPreviewOpen() && !dialogOpen) { closePreviewAndRefresh(); return }
   if (!dialogOpen && fromShelf) backToShelf()
