@@ -1,5 +1,8 @@
 # Solace
 
+[![CI](https://github.com/wisemen-dev/Solace/actions/workflows/ci.yml/badge.svg)](https://github.com/wisemen-dev/Solace/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/wisemen-dev/Solace)](https://github.com/wisemen-dev/Solace/releases)
+
 > 本地 PDF 私人图书馆 —— 集中管理、手动分类、轻量预览，再加一点让人会心一笑的小趣味。
 
 Solace 是一款 Windows 桌面应用（Electron），把散落各处的 PDF 收进一座本地图书馆：
