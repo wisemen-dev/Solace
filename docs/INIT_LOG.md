@@ -12,7 +12,7 @@
 | 初始化日期 | 2026-09-05 |
 | 初始版本 | v0.1.0 |
 | 操作系统 | Windows 10.0.26200 x64 |
-| 工作区路径 | `E:\Learning\pycharm\ExperProject\Solace_Rust` |
+| 工作区路径 | `<本地项目目录>`（公开发布前已脱敏） |
 | Git 实际安装位置 | `C:\Program Files\Git` |
 | Node.js / npm 版本 | Node v24.15.0 / npm 12.0.1（2026-09-05 实测） |
 | Git 版本 | 2.54.0.windows.1（2026-09-05 实测） |
@@ -24,10 +24,8 @@
 
 ### 异常 #1：工作区目录在资源管理器中不存在
 
-- **现象**：ZCode 会话配置的工作目录
-  `E:\Learning\pycharm\ExperProject\Solace_Rust` 在资源管理器中找不到。
-- **排查**：逐级探测路径链，`E:\Learning` → `pycharm` → `ExperProject` 均存在，
-  断在最后一层 `Solace_Rust`。
+- **现象**：ZCode 会话配置的工作目录 `<本地项目目录>` 在资源管理器中找不到。
+- **排查**：逐级探测路径链，父级目录逐级存在，断在最后一层 `Solace_Rust`。
 - **结论**：该目录**从未被创建过**（此前仅作为工作区路径配置存在，不是被移动或删除）。
 - **处置**：2026-09-05 初始化时由本次创建，自此该路径真实存在。
 - **影响**：无遗留问题。若未来再出现"目录消失"，先逐级探测路径链确认断点层级。
@@ -38,7 +36,7 @@
   `spawn E:\Git\bin\bash.exe ENOENT`。
 - **排查**：`E:\Git\bin\bash.exe` 确实不存在；但 `C:\Program Files\Git\bin\bash.exe`
   存在，说明 Git 曾装在 E:\Git 且现已不在，客户端 Shell 探测结果未更新。
-  `C:\Users\Molly\.zcode\cli\config.json` 不存在，无用户级配置可改。
+  `C:\Users\<用户名>\.zcode\cli\config.json` 不存在，无用户级配置可改。
 - **结论**：ZCode 客户端缓存的 Git Bash 路径指向旧安装位置（疑似旧版 Git 安装于
   E:\Git，重装/迁移到 C 盘后残留 PATH 或注册表旧值）。
 - **影响**：仅影响开发会话内的命令执行（npm / git 等），不影响应用代码与运行。
