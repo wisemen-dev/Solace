@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # Solace 是 Windows 桌面应用：在目标平台上跑回归
+    runs-on: windows-latest
+    env:
+      # 单测只依赖纯 Node 数据层，不需要 Electron 二进制，跳过大文件下载
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:renderer

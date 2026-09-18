@@ -118,3 +118,8 @@ SolaceLibrary/
 - 启动时的孤儿清理只认严格 UUID 命名的文件，且库为空时不清扫：
   误删用户的 PDF 副本是不可逆的，宁可多留
 - 环境异常、初始化步骤、复现方法统一记录在 `docs/INIT_LOG.md`，功能变更记入 `CHANGELOG.md`
+
+## 许可证
+
+[MIT](LICENSE) —— 霞鹜文楷 Lite 字体（OFL）与 pdf.js（Apache-2.0）等
+依赖遵循其各自的开源协议。
