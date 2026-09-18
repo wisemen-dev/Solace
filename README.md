@@ -64,6 +64,17 @@ npm test              # 数据层与监视器单测（纯 Node，不依赖 Elect
 npm run test:renderer # 渲染层冒烟台（DOM 桩里真实跑 app.js 主链路）
 ```
 
+## 推荐搭配
+
+- **电子书下载：[Olib](https://github.com/shiyi-0x7f/o-lib)** —— 开源、免费、
+  无广告的图书桌面客户端（aria2 多线程下载，支持 Win/macOS/Linux）。把它的
+  保存目录设为 Solace 的「自动入库 · 监视文件夹」，搜到的书落盘即自动入库，
+  从下载到上架一条龙
+- **笔记编辑器：[Typora](https://typora.io/)** —— 所见即所得的 Markdown 编辑器，
+  Solace 会自动探测已安装的 Typora，点笔记即开即写；也可在 设置 → 笔记 里指定
+  任意编辑器（Obsidian、VS Code 皆可）——笔记本身就是普通的 `.md` 文件，
+  随时可迁移
+
 ## 打包发布
 
 ```bash
