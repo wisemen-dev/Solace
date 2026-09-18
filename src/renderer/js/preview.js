@@ -13,6 +13,10 @@ let pendingProgress = null // 待落库的进度 { doc, page, total }，绑定�
 let progressTimer = null
 let resumeEnabled = true  // 设置面板「恢复上次阅读位置」开关（app.js 注入）
 const lastPctByDoc = new Map() // docId -> 本会话上次记录的进度百分比，判定「读毕」瞬间
+// 会话代数：每次开/关预览递增。在途渲染、在途大纲解析都只认自己那一代的结果，
+// 否则关闭预览时被 pdf.destroy() 打断的渲染会把失败信息写进错误浮层，
+// 下一次打开预览可能先看到上一本的报错
+let sessionToken = 0
 
 export function setResumeEnabled (v) {
   resumeEnabled = !!v
@@ -38,6 +42,8 @@ export function openPreview (doc, jumpPage = null) {
   if (pendingProgress) flushProgress()
   currentDoc = doc
   readMarked = false
+  sessionToken++ // 上一本的（哪怕还没渲染完的）结果就此作废
+  rerenderPending = false
   window.currentPreviewId = doc.id
   document.getElementById('previewTitle').textContent = doc.title
   closeNotes() // 换书/重开时重置笔记面板
@@ -51,6 +57,8 @@ export function closePreview () {
   // 否则 getLibrary 与 setProgress 并发竞争，会读回旧进度。
   clearTimeout(progressTimer)
   const flushed = flushProgress()
+  sessionToken++ // 作废在途渲染/大纲，它们不该再往界面上写东西
+  rerenderPending = false
   closeNotes()
   errBox.hidden = true
   overlay.hidden = true
@@ -73,7 +81,10 @@ async function loadDoc (id, jumpPage) {
   const stale = () => overlay.hidden || !currentDoc || currentDoc.id !== id
   try {
     const buffer = await window.solace.readPreview(id)
-    const pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer), ...docParams }).promise
+    // IPC 送来的就是 Uint8Array，直接用（再包一层 new Uint8Array 会白复制
+    // 一整份文件——大 PDF 上就是几十 MB 的无谓内存与耗时）
+    const data = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
+    const pdfDoc = await pdfjsLib.getDocument({ data, ...docParams }).promise
     // 过期结果必须销毁丢弃：否则会把已关闭的预览「复活」——pdf 挂着永不
     // destroy（内存泄漏）、往隐藏的 canvas 渲染
     if (stale()) {
@@ -103,7 +114,8 @@ async function loadDoc (id, jumpPage) {
     const msg = err && err.name === 'PasswordException'
       ? '此 PDF 已加密，内置预览无法打开。请用卡片上的「打开」按钮在外部阅读器中阅读。'
       : `预览加载失败：${err.message || err}`
-    alert(msg)
+    // 原生 alert 会阻塞渲染进程且样式脱离主题，改用时长更长的 toast
+    window.toast?.(msg, 6000)
   }
 }
 
@@ -118,7 +130,9 @@ function updatePageIndicator () {
 const MAX_CANVAS_SIDE = 8192
 
 async function renderPage () {
-  if (!pdf || rendering) { rerenderPending = true; return }
+  if (!pdf) return // 没有文档就不排队（早先会置 rerenderPending 让标志卡住）
+  if (rendering) { rerenderPending = true; return }
+  const token = sessionToken
   rendering = true
   errBox.hidden = true
   try {
@@ -139,13 +153,19 @@ async function renderPage () {
 
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
   } catch (err) {
+    // 关闭预览时 pdf.destroy() 会打断在途渲染，这里报的「失败」并不是真失败：
+    // 只在仍属于当前会话时才写错误浮层
+    if (token !== sessionToken) return
     // 渲染失败不再静默白屏：明确告知页码与原因，并给出出路
     errText.textContent = `第 ${pageNum} 页渲染失败（${String(err.message || err)}）。` +
       '可能是内置预览引擎（pdf.js）对此文件的兼容性限制，可点顶栏「外部打开」阅读本书。'
     errBox.hidden = false
   } finally {
     rendering = false
-    if (rerenderPending) { rerenderPending = false; renderPage() }
+    if (rerenderPending) {
+      rerenderPending = false
+      if (token === sessionToken) renderPage()
+    }
   }
 }
 
@@ -272,19 +292,21 @@ document.getElementById('btnPrevPage').addEventListener('click', () => stepPage(
 document.getElementById('btnNextPage').addEventListener('click', () => stepPage(1))
 
 // 统一跳转入口：翻页按钮、底栏页码输入、目录点击都走这里。
-// clamp 到合法页码；目标与当前页相同只复位指示器，不重渲染不记足迹
+// clamp 到合法页码；任何显式翻页动作都算「读过一次」（单页文档只有这一条
+// 翻页途径，早先按「页码是否变化」判定会让它永远记不上足迹）；
+// 目标与当前页相同则只复位指示器，不重渲染
 async function jumpTo (p) {
   if (!pdf) return
   p = Math.floor(Number(p))
   if (!(p >= 1)) p = 1
   if (p > pdf.numPages) p = pdf.numPages
+  markReadOnce()
   if (p === pageNum) { pageJump.value = pageNum; return }
   pageNum = p
   updatePageIndicator()
   renderPage()
   body.scrollTop = 0
   scheduleProgress()
-  markReadOnce()
 }
 
 function stepPage (delta) {

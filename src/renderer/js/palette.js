@@ -1,5 +1,5 @@
 import { openPreview } from './preview.js'
-import { textHit } from './textindex.js'
+import { textHit, searchTextIndex } from './textindex.js'
 import { normText, esc } from './util.js'
 
 // Ctrl+K 命令面板：搜书（标题/文件名/全文）、执行常用动作、跳转到分类/标签。
@@ -32,6 +32,7 @@ async function openPalette () {
     return
   }
   input.value = ''
+  await searchTextIndex('') // 全文命中表随面板打开重置（正文在主进程，按需查）
   rebuild('')
   dlg.showModal()
   input.focus()
@@ -114,7 +115,23 @@ function execute (item) {
   }
 }
 
-input.addEventListener('input', () => rebuild(input.value))
+// 全文命中要问主进程（索引正文不在渲染层），所以输入先出标题/文件名结果，
+// 防抖后补一次带全文命中的结果；ticket 防止过期结果覆盖新结果
+let queryTimer = null
+let queryTicket = 0
+
+input.addEventListener('input', () => {
+  const kw = input.value
+  clearTimeout(queryTimer)
+  const ticket = ++queryTicket
+  rebuild(kw)
+  if (!normText(kw)) return
+  queryTimer = setTimeout(async () => {
+    await searchTextIndex(kw)
+    if (ticket !== queryTicket) return
+    rebuild(kw)
+  }, 120)
+})
 
 input.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowDown') { e.preventDefault(); updateActive(1) }
@@ -135,6 +152,13 @@ list.addEventListener('mousemove', (e) => {
 
 // 点对话框空白处（backdrop）关闭
 dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close() })
+
+// 关闭后通知 app.js 恢复主窗口的全文命中表：本面板与主窗口共用 textindex.js
+// 里那张模块级命中表——openPalette 打开即清空、输入即覆盖。主窗口还挂着
+// 的搜索词若不按原词重查，下一次重渲染就会丢掉「仅正文命中」的结果
+dlg.addEventListener('close', () => {
+  window.dispatchEvent(new CustomEvent('solace-palette-closed'))
+})
 
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {

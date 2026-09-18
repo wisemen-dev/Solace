@@ -5,3 +5,5 @@ tmp/
 *.log
 .DS_Store
 Thumbs.db
+# 开发期桌面截图（界面验证用），不入库
+/result.png

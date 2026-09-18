@@ -54,6 +54,13 @@ npm start
 开发/测试技巧：`SOLACE_DATA_DIR=<目录> npm start` 可将资料库隔离到指定位置；
 `node scripts/make-sample-pdfs.js` 可生成测试用 PDF（输出到 `tmp/`）。
 
+回归测试：
+
+```bash
+npm test              # 数据层与监视器单测（纯 Node，不依赖 Electron）
+npm run test:renderer # 渲染层冒烟台（DOM 桩里真实跑 app.js 主链路）
+```
+
 ## 打包发布
 
 ```bash
@@ -74,8 +81,10 @@ pdf.js 的 ESM 模块与 worker，asar 内的 Worker 加载存在已知限制。
 ```
 Solace_Rust/
 ├── src/
-│   ├── main/        # Electron 主进程：窗口、IPC、资料库数据层
+│   ├── main/        # Electron 主进程：窗口、IPC、资料库数据层、目录监视
 │   └── renderer/    # 渲染进程：界面、样式、pdf.js 预览
+├── test/            # 回归测试：library/watcher 单测 + 渲染层冒烟台
+├── scripts/         # 开发脚本：图标生成、示例 PDF 生成
 ├── docs/
 │   └── INIT_LOG.md  # 初始化与环境记录（问题追踪从这里开始）
 ├── CHANGELOG.md
@@ -90,13 +99,22 @@ Solace_Rust/
 ```
 SolaceLibrary/
 ├── library.json      # 全部元数据：分类、标签、文档条目（含阅读进度）、打开记录
-├── textindex.json    # 全文检索索引（每本书每页的归一化文本）
+├── textindex/        # 全文检索索引：index.json 清单 + <文档id>.json 一本一分片
 ├── covers/           # 封面缩略图缓存（以文档 id 命名）
-└── files/            # 入库的 PDF 副本（以文档 id 命名）
+├── files/            # 入库的 PDF 副本（以文档 id 命名）
+└── notes/            # 每本书的 Markdown 笔记：notes/<文档id>/*.md
 ```
+
+索引按本分片是为了避免「每提取一本就重写整份索引」的写放大；正文由主进程
+按需读取，渲染层只拿命中页码。`textindex/` 整目录删掉也无妨，重新打开应用
+会按需重建。
 
 ## 开发约定
 
 - 主进程与渲染进程只通过 preload 暴露的 `window.solace.*` IPC 通信
 - 元数据写入采用「临时文件 + 原子重命名」，避免写入中断损坏 library.json
+- `library.js` / `watcher.js` 不依赖 Electron，可直接在 Node 下单测——
+  改动数据层请顺手补 `test/` 用例
+- 启动时的孤儿清理只认严格 UUID 命名的文件，且库为空时不清扫：
+  误删用户的 PDF 副本是不可逆的，宁可多留
 - 环境异常、初始化步骤、复现方法统一记录在 `docs/INIT_LOG.md`，功能变更记入 `CHANGELOG.md`

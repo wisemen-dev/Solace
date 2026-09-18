@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron')
 contextBridge.exposeInMainWorld('solace', {
   // 资料库
   getLibrary: () => ipcRenderer.invoke('library:get'),
+  getOpenStats: () => ipcRenderer.invoke('library:stats'),
   importDialog: () => ipcRenderer.invoke('library:importDialog'),
   importPaths: (paths) => ipcRenderer.invoke('library:importPaths', paths),
   getLibraryInfo: () => ipcRenderer.invoke('library:info'),
@@ -19,8 +20,9 @@ contextBridge.exposeInMainWorld('solace', {
   markRead: (id) => ipcRenderer.invoke('doc:markRead', id),
   readPreview: (id) => ipcRenderer.invoke('preview:read', id),
   setProgress: (id, page, totalPages) => ipcRenderer.invoke('doc:setProgress', id, page, totalPages),
-  // 全文索引
-  getTextIndex: () => ipcRenderer.invoke('textindex:get'),
+  // 全文索引（清单 + 主进程侧搜索，不把整份索引拉到渲染进程）
+  getTextIndexStatus: () => ipcRenderer.invoke('textindex:status'),
+  searchTextIndex: (kw) => ipcRenderer.invoke('textindex:search', kw),
   setTextIndex: (id, payload) => ipcRenderer.invoke('textindex:set', id, payload),
   // 封面
   setCover: (id, dataUrl) => ipcRenderer.invoke('cover:set', id, dataUrl),

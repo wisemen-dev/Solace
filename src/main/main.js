@@ -64,9 +64,21 @@ if (!app.requestSingleInstanceLock()) {
     // 固定（不走指针也不允许迁移），否则资料库位置可经设置面板更改，
     // 真实位置记录在 userData 下的指针文件里
     const envPinned = !!process.env.SOLACE_DATA_DIR
-    library.init(process.env.SOLACE_DATA_DIR || app.getPath('userData'), {
-      pointerFile: envPinned ? null : path.join(app.getPath('userData'), 'solace-library-pointer.json')
-    })
+    try {
+      library.init(process.env.SOLACE_DATA_DIR || app.getPath('userData'), {
+        pointerFile: envPinned ? null : path.join(app.getPath('userData'), 'solace-library-pointer.json')
+      })
+    } catch (err) {
+      // 连默认位置都建不起库（目录只读/磁盘满/路径被占）：明确告诉用户再退出，
+      // 不要让 whenReady 静默 reject 成一个「双击了没反应」的进程
+      dialog.showErrorBox('无法初始化资料库',
+        `${(err && err.message) || err}\n\n请检查该目录的读写权限，或用 SOLACE_DATA_DIR 指定另一个位置。`)
+      app.quit()
+      return
+    }
+    // 删除文档时的笔记默认移入系统回收站（与确认框文案一致）；library.js
+    // 本身不依赖 electron，能力由这里注入
+    library.setTrashHandler((p) => shell.trashItem(p))
     const notice = library.getStartupNotice()
     if (notice) dialog.showErrorBox('资料库位置不可用', notice)
     notes.init(library.getRootDir(), () => library.getData().settings || {})
@@ -122,6 +134,8 @@ async function openWithReader (file, customExe) {
 
 function registerIpc () {
   ipcMain.handle('library:get', () => library.getData())
+  // 足迹的时间窗口统计：按天立账在主进程侧算，口径与记账同一处
+  ipcMain.handle('library:stats', () => library.getOpenStats())
   // 资料库位置：设置面板展示路径 + 打开文件夹（备份用）+ 更改位置（迁移/换库）
   ipcMain.handle('library:info', () => ({ rootDir: library.getRootDir(), canRelocate: library.canRelocate() }))
   ipcMain.handle('library:openRoot', async () => {
@@ -192,7 +206,10 @@ function registerIpc () {
   ipcMain.handle('cover:set', (_e, id, dataUrl) => library.setCover(id, dataUrl))
   ipcMain.handle('cover:get', (_e, id) => library.getCoverDataUrl(id))
 
-  ipcMain.handle('textindex:get', () => library.getTextIndex())
+  // 全文索引：渲染层只取「哪些书已索引」的清单，搜索交给主进程按需读分片，
+  // 不再把整份索引（大库上可达几十 MB）结构化克隆给渲染进程
+  ipcMain.handle('textindex:status', () => library.getTextIndexStatus())
+  ipcMain.handle('textindex:search', (_e, kw) => library.searchTextIndex(kw))
   ipcMain.handle('textindex:set', (_e, id, payload) => library.setTextIndex(id, payload))
 
   ipcMain.handle('cat:add', (_e, name, parentId) => library.addCategory(name, parentId))

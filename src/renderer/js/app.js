@@ -1,7 +1,7 @@
 import { openPreview, isPreviewOpen, setResumeEnabled } from './preview.js'
 import { ensureCover, coverCache, clearCoverCache } from './covers.js'
 import { burst, setConfettiEnabled } from './confetti.js'
-import { initIndex, ensureQueued, setIndexPageLimit, textHit } from './textindex.js'
+import { initIndex, ensureQueued, setIndexPageLimit, textHit, searchTextIndex } from './textindex.js'
 import { initTheme, cycleTheme, themeLabel, applyTheme } from './theme.js'
 import { normText, esc, fmtRel } from './util.js'
 import { askText, askConfirm } from './dialog.js'
@@ -31,6 +31,34 @@ let fromShelf = false
 // 界面偏好（theme/viewMode），refresh 时从 data.settings 同步
 const prefs = { theme: 'auto', viewMode: 'grid' }
 
+// 偏好缺省值：切库时先清回这里再合并新库的 settings。只做 Object.assign
+// 的话，新库没有的键会留着旧库的值（设置是「随库走」的，串味与设计不符）
+const PREF_DEFAULTS = {
+  theme: 'auto',
+  viewMode: 'grid',
+  coverSize: 'medium',
+  dormantDays: 30,
+  indexPageLimit: 1500,
+  resumeReading: true,
+  confetti: true,
+  openingAnimation: true
+}
+
+function resetPrefs () {
+  for (const k of Object.keys(prefs)) delete prefs[k]
+  Object.assign(prefs, PREF_DEFAULTS)
+}
+
+// 本次会话实际显示的视图。与 prefs.viewMode 分开的原因：settings.viewMode 是
+// 用户选的「启动时的默认视图」，而「从书架点书堆下钻到某个分类」只是临时
+// 导航——早先它直接落库改写了 viewMode，用过一次书架就再也回不到「启动即
+// 书架」，默认视图被导航动作顶掉了。现在只有用户显式切视图/改设置才落库
+let sessionView = null // null = 尚未初始化，首帧从 settings 取
+
+function initSessionView () {
+  sessionView = ['grid', 'spine', 'shelf'].includes(prefs.viewMode) ? prefs.viewMode : 'grid'
+}
+
 const $ = (sel) => document.querySelector(sel)
 
 /* ================= 初始化 ================= */
@@ -40,6 +68,7 @@ refresh()
 async function refresh () {
   data = await window.solace.getLibrary()
   Object.assign(prefs, data.settings || {})
+  if (sessionView === null) initSessionView() // 首帧（或刚切过库）才从设置取
   applySettingFlags()
   initTheme(prefs)
   syncViewButton()
@@ -219,8 +248,51 @@ function applyShelf (shelf) {
   filters.keyword = f.keyword || ''
   fromShelf = false // 收藏夹是明确的筛选跳转：回退语义失效
   entrancePending = true // 应用收藏夹 = 明确的筛选切换
+  // 书架总览不显示单本书：应用收藏夹与点分类一样是明确的筛选跳转，
+  // 切到封面墙看书（临时导航不落库）。不切的话书堆会无视收藏夹的
+  // 分类/标签条件，点击只有侧栏高亮变化，像按钮失灵
+  if (sessionView === 'shelf') {
+    sessionView = 'grid'
+    syncViewButton()
+  }
   $('#searchInput').value = filters.keyword
-  renderAll()
+  return refreshTextHits(filters.keyword).then(ok => { if (ok) renderAll() })
+}
+
+/* ================= 搜索：全文命中由主进程按需查询 =================
+   索引正文留在主进程（textindex/<id>.json 分片），全文命中是异步取回的。
+   输入时先按标题/文件名即时出结果，防抖后再补一次带全文命中的渲染；
+   searchTicket 保证过期结果不会覆盖新结果 */
+
+let searchTimer = null
+let searchTicket = 0
+
+function scheduleFullText (delay) {
+  clearTimeout(searchTimer)
+  const ticket = ++searchTicket
+  searchTimer = setTimeout(async () => {
+    await searchTextIndex(filters.keyword)
+    if (ticket !== searchTicket) return
+    renderDocList()
+  }, delay)
+}
+
+// 输入型入口：即时出标题/文件名结果，全文命中稍后补齐
+function onKeywordTyped (kw) {
+  clearTimeout(searchTimer)
+  searchTicket++
+  if (!normText(kw)) searchTextIndex('') // 清空搜索：命中表立即作废
+  renderDocList()
+  if (normText(kw)) scheduleFullText(150)
+}
+
+// 非输入型入口（收藏夹 / 命令面板 / 切库）：命中就绪后一并渲染。
+// 返回 false 表示期间用户又改了搜索词，本次渲染作废
+async function refreshTextHits (kw) {
+  clearTimeout(searchTimer)
+  const ticket = ++searchTicket
+  await searchTextIndex(kw)
+  return ticket === searchTicket
 }
 
 /* ================= 主区：陈列视图 =================
@@ -235,7 +307,9 @@ function visibleDocs () {
   // 树状筛选：选中的是具体分类时，子孙分类的书一并显示
   const catIds = typeof filters.categoryId === 'string' ? categorySubtreeIds(filters.categoryId) : null
   return data.documents.filter(d => {
-    if (filters.categoryId === null && d.categoryId !== null) return false
+    // 未分类口径与 categoryCounts 的 `!d.categoryId` 保持一致：
+    // 缺字段（undefined）的历史条目两边都算未分类，不能一边计数一边不显示
+    if (filters.categoryId === null && (d.categoryId ?? null) !== null) return false
     if (catIds && !catIds.has(d.categoryId)) return false
     if (filters.tagId && !d.tagIds.includes(filters.tagId)) return false
     // 三级命中：标题 / 文件名 / 全文索引
@@ -245,6 +319,10 @@ function visibleDocs () {
 }
 
 function renderDocList () {
+  // 本次渲染会整体替换 #docGrid 的内容：旧的 <img> 已脱离文档，但
+  // IntersectionObserver 仍持有它们的强引用（不回收），所以先断开再重新观察，
+  // 否则长会话里反复渲染会持续堆积不可见的 img 节点
+  coverObserver.disconnect()
   // 搜索触发书架→封面墙回退、清空搜索回到书堆，按钮状态必须跟着实际渲染走
   syncViewButton()
   // 回退按钮显隐与渲染同步（防御：即使某路径漏清标记也不会残留按钮）
@@ -266,11 +344,11 @@ function renderDocList () {
   const COVER_MIN = { small: '140px', medium: '172px', large: '220px' }
   grid.style.setProperty('--cover-min', COVER_MIN[prefs.coverSize] || COVER_MIN.medium)
   // 书架（分类书堆总览）：无搜索词时生效；一搜索就回退封面墙显示结果
-  const shelf = prefs.viewMode === 'shelf' && !nkw
+  const shelf = sessionView === 'shelf' && !nkw
   // 书架视图没有勾选语义：批量中清空搜索回到书架时自动退出（本帧内直接
   // 复位，不递归重渲染）
   if (shelf && batchMode) resetBatchState()
-  grid.classList.toggle('spine-mode', prefs.viewMode === 'spine' && !shelf)
+  grid.classList.toggle('spine-mode', sessionView === 'spine' && !shelf)
   grid.classList.toggle('shelf-mode', shelf)
   // 批量勾选只在封面墙提供（书脊无操作按钮、书架是分类书堆）
   grid.classList.toggle('batch-mode', batchMode && !shelf)
@@ -299,7 +377,7 @@ function renderDocList () {
       ? textHit(d.id, nkw)
       : 0
 
-    if (prefs.viewMode === 'spine') {
+    if (sessionView === 'spine') {
       // 书脊陈列：纯浏览视图（点击预览、拖拽归档仍可用）
       return `
     <div class="doc-card${entrance ? ' enter' : ''}" data-id="${d.id}" draggable="true" style="--i:${i}">
@@ -352,9 +430,9 @@ const VIEW_LABEL = { grid: '📚 封面', spine: '📖 书脊', shelf: '🏛 书
 const VIEW_TITLE = { grid: '切换到书脊视图', spine: '切换到书架（分类书堆）', shelf: '切换到封面墙' }
 
 // 实际渲染的视图：书架是分类总览页，搜索中自动回退封面墙显示结果
-// （prefs.viewMode 保持书架，清空搜索即回到书堆）
+// （sessionView 保持书架，清空搜索即回到书堆）
 function effectiveView () {
-  return prefs.viewMode === 'shelf' && normText(filters.keyword) ? 'grid' : prefs.viewMode
+  return sessionView === 'shelf' && normText(filters.keyword) ? 'grid' : sessionView
 }
 
 function syncViewButton () {
@@ -369,6 +447,7 @@ $('#btnView').addEventListener('click', async () => {
   fromShelf = false // 用户主动切视图：回退语义失效
   entrancePending = true // 明确的视图切换：播放入场编排
   const next = VIEW_ORDER[(VIEW_ORDER.indexOf(effectiveView()) + 1) % VIEW_ORDER.length]
+  sessionView = next
   prefs.viewMode = next
   if (next === 'shelf') {
     // 书架是分类总览：进来时清空筛选，与 Lumin「返回书架退出搜索态」一致
@@ -376,6 +455,7 @@ $('#btnView').addEventListener('click', async () => {
     filters.tagId = null
     filters.keyword = ''
     $('#searchInput').value = ''
+    searchTextIndex('') // 命中表随搜索词一起作废
   }
   syncViewButton()
   renderAll()
@@ -493,15 +573,16 @@ function docsInCategory (catId) {
     .sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt))
 }
 
-// 点书堆 → 应用分类筛选并切到封面墙（对应 Lumin「点堆进入网格」）
+// 点书堆 → 应用分类筛选并切到封面墙（对应 Lumin「点堆进入网格」）。
+// 这是临时导航：只改本次会话的视图，不落库——否则用户设的「启动即书架」
+// 会被一次下钻永久顶掉
 async function openPile (key) {
   filters.categoryId = key === 'none' ? null : key
-  prefs.viewMode = 'grid'
+  sessionView = 'grid'
   fromShelf = true // 由书堆进入：允许一步回退到书架总览
   entrancePending = true // 点书堆进入封面墙：播放入场编排
   syncViewButton()
   renderAll()
-  try { await window.solace.updateSettings({ viewMode: 'grid' }) } catch { /* 下次启动仍为书架也可接受 */ }
   $('#docGrid').scrollTo({ top: 0 })
 }
 
@@ -509,11 +590,13 @@ async function openPile (key) {
 function backToShelf () {
   if (!fromShelf) return
   fromShelf = false
+  sessionView = 'shelf'
   prefs.viewMode = 'shelf'
   filters.categoryId = undefined
   filters.tagId = null
   filters.keyword = ''
   $('#searchInput').value = ''
+  searchTextIndex('') // 命中表随搜索词一起作废
   entrancePending = true
   syncViewButton()
   renderAll()
@@ -631,17 +714,20 @@ $('#btnBatchDel').addEventListener('click', async () => {
     title: `批量删除 ${ids.length} 本文档`,
     text: '所选书籍将从书架移除，库内副本与封面一并删除（原文件不受影响）。',
     checkLabel: '同时删除所选书籍的全部笔记（移入系统回收站）',
-    okText: '删除'
+    okText: '删除',
+    checkDefault: false // 默认保留笔记：误按回车不该丢内容
   })
   if (!res) return
   let removed = 0
   const keptNotes = []
   const leftovers = new Set()
+  let purged = 0
   for (const id of ids) {
     try {
       const out = await window.solace.removeDoc(id, { keepNotes: !res.checked })
       removed++
       if (out.notesKeptTo) keptNotes.push(out.notesKeptTo)
+      if (out.notesPurged) purged++
       for (const l of out.leftovers || []) leftovers.add(l)
     } catch { /* 过期选中项（已被删除）等，跳过 */ }
   }
@@ -649,6 +735,7 @@ $('#btnBatchDel').addEventListener('click', async () => {
   refresh()
   const parts = [`已删除 ${removed} 本`]
   if (keptNotes.length) parts.push(`${keptNotes.length} 本的笔记保留在资料库 notes/ 下`)
+  if (purged) parts.push(`${purged} 本的笔记已永久删除（系统回收站不可用）`)
   if (leftovers.size) parts.push(`${leftovers.size} 个文件正被占用，重启应用后自动清理`)
   toast(parts.join('；'))
 })
@@ -666,11 +753,11 @@ document.body.addEventListener('click', async (e) => {
         filters.categoryId = id === 'all' ? undefined : id === 'none' ? null : id
         fromShelf = false // 侧栏分类不是书堆入口：不提供回退
         entrancePending = true // 明确的筛选切换：播放入场编排
-        // 书架总览不显示单本书：点了分类就切到封面墙看书
-        if (prefs.viewMode === 'shelf') {
-          prefs.viewMode = 'grid'
+        // 书架总览不显示单本书：点了分类就切到封面墙看书。
+        // 与书堆下钻同理，这是临时导航，只改会话视图不落库
+        if (sessionView === 'shelf') {
+          sessionView = 'grid'
           syncViewButton()
-          window.solace.updateSettings({ viewMode: 'grid' }).catch(() => {})
         }
         renderAll()
         break
@@ -698,7 +785,7 @@ document.body.addEventListener('click', async (e) => {
       }
       case 'apply-shelf': {
         const shelf = (data.smartShelves || []).find(s => s.id === id)
-        if (shelf) applyShelf(shelf)
+        if (shelf) await applyShelf(shelf)
         break
       }
       case 'rename-shelf': {
@@ -709,7 +796,8 @@ document.body.addEventListener('click', async (e) => {
         break
       }
       case 'del-shelf': {
-        if (confirm('删除该收藏夹？只移除筛选组合，不影响藏书。')) {
+        const res = await askConfirm({ title: '删除收藏夹', text: '只移除筛选组合，不影响藏书。', okText: '删除' })
+        if (res) {
           await window.solace.removeShelf(id)
           refresh()
         }
@@ -719,6 +807,14 @@ document.body.addEventListener('click', async (e) => {
         filters.tagId = filters.tagId === id ? null : id
         fromShelf = false
         entrancePending = true
+        // 书架总览不显示单本书：点了标签同样切到封面墙看书（与 filter-cat
+        // 同语义）。书堆只按分类组织、无视标签筛选，不切视图的话这次点击
+        // 只有侧栏高亮在变；残留的 tagId 还会在之后下钻书堆时叠加出
+        // 「莫名筛得更少」的结果
+        if (sessionView === 'shelf') {
+          sessionView = 'grid'
+          syncViewButton()
+        }
         renderAll()
         break
       }
@@ -730,7 +826,12 @@ document.body.addEventListener('click', async (e) => {
         break
       }
       case 'del-cat': {
-        if (confirm('删除该分类？子分类与直属文档将上移到其父分类（顶级分类的文档变为未分类）。')) {
+        const res = await askConfirm({
+          title: '删除分类',
+          text: '子分类与直属文档将上移到其父分类（顶级分类的文档变为未分类）。',
+          okText: '删除'
+        })
+        if (res) {
           if (filters.categoryId === id) filters.categoryId = undefined
           await window.solace.removeCategory(id)
           refresh()
@@ -738,7 +839,8 @@ document.body.addEventListener('click', async (e) => {
         break
       }
       case 'del-tag': {
-        if (confirm('删除该标签？会同时从所有文档上移除。')) {
+        const res = await askConfirm({ title: '删除标签', text: '会同时从所有文档上移除。', okText: '删除' })
+        if (res) {
           if (filters.tagId === id) filters.tagId = null
           await window.solace.removeTag(id)
           refresh()
@@ -772,13 +874,15 @@ document.body.addEventListener('click', async (e) => {
           title: '删除文档',
           text: `《${doc.title}》将从书架移除，库内副本与封面一并删除（原文件不受影响）。`,
           checkLabel: '同时删除这本书的全部笔记（移入系统回收站）',
-          okText: '删除'
+          okText: '删除',
+          checkDefault: false // 默认保留笔记：误按回车不该丢内容
         })
         if (res) {
           const out = await window.solace.removeDoc(id, { keepNotes: !res.checked })
           refresh()
           const parts = []
           if (out.notesKeptTo) parts.push(`笔记已保留在资料库 notes/${out.notesKeptTo}/`)
+          if (out.notesPurged) parts.push('笔记已永久删除（系统回收站不可用）')
           if (out.leftovers && out.leftovers.length) parts.push(`${out.leftovers.join('、')} 正被其他程序占用，重启应用后自动清理`)
           toast(`《${out.title}》已删除${parts.length ? '；' + parts.join('；') : ''}`)
         }
@@ -917,7 +1021,7 @@ $('#btnImport').addEventListener('click', async () => {
 
 $('#searchInput').addEventListener('input', (e) => {
   filters.keyword = e.target.value
-  renderDocList()
+  onKeywordTyped(filters.keyword)
 })
 
 $('#btnAddCat').addEventListener('click', async () => {
@@ -942,7 +1046,7 @@ $('#btnAddShelf').addEventListener('click', async () => {
 })
 
 // 命令面板（palette.js）派发的筛选与动作
-window.addEventListener('solace-palette', (e) => {
+window.addEventListener('solace-palette', async (e) => {
   const d = e.detail || {}
   if (d.type === 'filter') {
     filters.categoryId = d.categoryId === undefined ? undefined : d.categoryId
@@ -950,8 +1054,13 @@ window.addEventListener('solace-palette', (e) => {
     filters.keyword = d.keyword || ''
     fromShelf = false // 命令面板筛选跳转：不提供回退
     entrancePending = true // 命令面板的筛选跳转：播放入场编排
+    // 书架总览不显示单本书：面板跳分类/标签同样切到封面墙（与 filter-cat 同语义）
+    if (sessionView === 'shelf') {
+      sessionView = 'grid'
+      syncViewButton()
+    }
     $('#searchInput').value = filters.keyword
-    renderAll()
+    if (await refreshTextHits(filters.keyword)) renderAll()
   } else if (d.type === 'action') {
     if (d.name === 'tool') {
       window.solace.launchTool().catch(err => toast(`启动失败：${err.message || err}`))
@@ -963,13 +1072,39 @@ window.addEventListener('solace-palette', (e) => {
   }
 })
 
+// 命令面板关闭：恢复主窗口的全文命中表。面板与主窗口共用 textindex.js 的
+// 模块级命中表，面板打开即清空、输入即覆盖；不恢复的话，主窗口还挂着的
+// 搜索在下一次重渲染（自动入库刷新、切视图等）时会丢掉「仅正文命中」的书。
+// 主窗口没有关键词时命中表本就该是空的，不必动；执行面板动作（换筛选/开书）
+// 时本监听与 solace-palette 会先后触发，refreshTextHits 的 ticket 机制保证
+// 只有最后一次查询生效，不会互相覆盖
+window.addEventListener('solace-palette-closed', async () => {
+  if (!normText(filters.keyword)) return
+  if (await refreshTextHits(filters.keyword)) renderDocList()
+})
+
 // 设置面板（settings.js）派发的更改：更新本地偏好并做对应联动。
 // 与顶栏快捷开关同源同向——无论从哪边改，都以事件为唯一联动入口
 window.addEventListener('solace-settings', (e) => {
   const patch = e.detail || {}
   Object.assign(prefs, patch)
   if ('theme' in patch) applyTheme(prefs)
-  if ('viewMode' in patch) { entrancePending = true; fromShelf = false }
+  if ('viewMode' in patch) {
+    // 设置面板改的是「启动时的默认视图」：当前会话也跟着切过去（与旧行为一致）
+    sessionView = patch.viewMode
+    entrancePending = true
+    fromShelf = false
+    // 书架是分类总览页，不显示单本书：切进来时清空筛选（与顶栏按钮同语义）。
+    // 否则网格里正挂着的分类/标签筛选会被书堆无视，看起来像「切了没反应」；
+    // 残留条件还会在之后下钻书堆时叠加出更窄的结果
+    if (patch.viewMode === 'shelf') {
+      filters.categoryId = undefined
+      filters.tagId = null
+      filters.keyword = ''
+      $('#searchInput').value = ''
+      searchTextIndex('') // 命中表随搜索词一起作废
+    }
+  }
   if ('viewMode' in patch || 'coverSize' in patch) renderAll()
   if ('dormantDays' in patch) updateDormantBadge()
   if ('confetti' in patch || 'resumeReading' in patch || 'indexPageLimit' in patch) applySettingFlags()
@@ -987,10 +1122,13 @@ window.addEventListener('solace-library-moved', async (e) => {
   clearCoverCache()
   exitBatch() // 旧库的选中 id 在新库无意义
   fromShelf = false // 新库里「从书架进入」的上下文无意义
+  sessionView = null // 视图偏好随库走：下次 refresh 从新库的 settings 取
+  resetPrefs() // 旧库的偏好不残留（新库缺该键时不会沿用旧值）
   filters.categoryId = undefined
   filters.tagId = null
   filters.keyword = ''
   $('#searchInput').value = ''
+  searchTextIndex('') // 命中表随搜索词一起作废
   await refresh()
   const head = {
     moved: '资料库已整体移动到新位置',
@@ -1155,20 +1293,27 @@ function renderCategoryChart () {
     </ul>`
 }
 
-function renderStats () {
+async function renderStats () {
   const now = Date.now()
   const docs = data.documents
   const totalOpens = docs.reduce((s, d) => s + d.openCount, 0)
-  const inDays = days => (data.history || [])
-    .filter(h => now - new Date(h.at).getTime() <= days * 86400000).length
+  // 近 7/30 天次数由主进程按天立账算出（history 有 200 条上限，不能拿来
+  // 做时间窗口统计，否则翻多了数字会互相打架）
+  let opens7d = 0
+  let opens30d = 0
+  try {
+    const s = await window.solace.getOpenStats()
+    opens7d = s.opens7d
+    opens30d = s.opens30d
+  } catch { /* 统计取不到就显示 0，不影响其余面板 */ }
   const dormant = dormantDocs()
   $('#statsDormantHint').textContent = `超过 ${dormantDays()} 天未读`
 
   $('#statsOverview').innerHTML = `
     <span class="stats-chip"><b>${docs.length}</b>本藏书</span>
     <span class="stats-chip"><b>${totalOpens}</b>次累计翻开</span>
-    <span class="stats-chip"><b>${inDays(7)}</b>次近 7 天</span>
-    <span class="stats-chip"><b>${inDays(30)}</b>次近 30 天</span>
+    <span class="stats-chip"><b>${opens7d}</b>次近 7 天</span>
+    <span class="stats-chip"><b>${opens30d}</b>次近 30 天</span>
     <span class="stats-chip"><b>${dormant.length}</b>本沉睡中</span>`
 
   renderCategoryChart()
@@ -1196,9 +1341,9 @@ function renderStats () {
     : '<li class="empty-line">没有沉睡的书，保持得很好 🌿</li>'
 }
 
-$('#btnStats').addEventListener('click', () => { renderStats(); $('#statsDialog').showModal() })
+$('#btnStats').addEventListener('click', async () => { await renderStats(); $('#statsDialog').showModal() })
 $('#btnStatsClose').addEventListener('click', () => $('#statsDialog').close())
-$('#btnDormant').addEventListener('click', () => { renderStats(); $('#statsDialog').showModal() })
+$('#btnDormant').addEventListener('click', async () => { await renderStats(); $('#statsDialog').showModal() })
 
 /* ================= 预览浮层的关闭按钮 ================= */
 
@@ -1252,14 +1397,16 @@ window.solace.onWatchEvent?.((ev) => {
 
 /* ================= 工具函数 ================= */
 
-function toast (text) {
+// text：提示文案（textContent 写入，无需转义）
+// ms：停留时长，默认 2.2s；需要用户看清的长文案（如预览加载失败）可传更长
+function toast (text, ms = 2200) {
   const box = $('#toastBox')
   const el = document.createElement('div')
   el.className = 'toast'
   el.textContent = text
   box.appendChild(el)
-  setTimeout(() => el.classList.add('out'), 2200)
-  setTimeout(() => el.remove(), 2700)
+  setTimeout(() => el.classList.add('out'), ms)
+  setTimeout(() => el.remove(), ms + 500)
 }
 // 供 preview.js 读毕庆祝等跨模块场景复用
 window.toast = toast
@@ -1274,16 +1421,13 @@ window.addEventListener('solace-index', (e) => {
   if (n) indexStatus.textContent = `📖 全文索引中… 剩 ${n} 本`
 })
 
-// 单本索引完成即刷新列表：让搜索中的全文命中即时出现
+// 单本索引完成即重查全文命中：防抖合并，整库建索引期间不会每完成一本
+// 就整表重渲染一次
 window.addEventListener('solace-index-doc', () => {
-  if (normText(filters.keyword)) renderDocList()
+  if (normText(filters.keyword)) scheduleFullText(300)
 })
 
 function fmtSize (n) {
   if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB'
   return Math.max(1, Math.round(n / 1024)) + ' KB'
-}
-
-function fmtDate (iso) {
-  return iso ? new Date(iso).toLocaleDateString('zh-CN') : '—'
 }

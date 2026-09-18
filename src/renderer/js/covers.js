@@ -77,7 +77,8 @@ async function drain () {
 
 async function generateCover (docId) {
   const buffer = await window.solace.readPreview(docId)
-  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer), ...docParams }).promise
+  const data = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
+  const pdf = await pdfjsLib.getDocument({ data, ...docParams }).promise
   try {
     const page = await pdf.getPage(1)
     const base = page.getViewport({ scale: 1 })

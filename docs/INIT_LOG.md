@@ -194,3 +194,51 @@ npm start
   （写入为原子操作，损坏概率低；`.tmp` 残留文件可安全删除）
 - 导入的文件找不到 → 库内文件以文档 id 重命名存于 `SolaceLibrary/files/`，
   原文件名只记录在 library.json 的 `fileName` 字段
+- 全文搜索无结果 → 索引在 `SolaceLibrary/textindex/`（清单 `index.json` +
+  一本一分片）；整目录删掉后重新打开应用会按需重建
+
+## 8. 2026-09-17 · 全量代码审查与修复批次
+
+本轮对全部源码做了逐文件审查，并在隔离目录里用可执行探针验证每条结论
+（探针脚本为一次性产物，已删除；能固化的结论全部落进 `test/`）。
+
+### 审查方法
+
+- 通读 5 个主进程文件 + 13 个渲染层模块 + index.html，核对注释/CHANGELOG
+  对行为的承诺与代码实际行为
+- 对 `library.js` 用隔离库跑行为探针（`library.js` 不依赖 Electron，可直接
+  在 Node 下驱动），把「注释说的」与「实测做的」对照
+- 渲染层用最小 DOM 桩真实执行 `app.js` 主链路（该桩已固化为
+  `test/renderer-smoke.mjs`），纯逻辑断言而不是目测
+
+### 结论摘要
+
+- **注释/DOC 承诺与实现不符**是最主要的问题来源：孤儿清理「只匹配本应用
+  id」、删除笔记「移入系统回收站」、`updateSettings`「枚举校验」三处都
+  与代码实际行为不一致，其中前两处会导致不可逆的数据丢失
+- **`library.json` 的 JSON 单文件选型与全文索引冲突**：INIT_LOG §3 的决策
+  前提是「不做全文检索」，v0.5 在其上加了全文索引，于是每提取一本就要把
+  整份索引重写一遍。实测 120 本 × 500 页时单次落库同步阻塞 221ms、建索引
+  累计写入 4.2GB。已改为按本分片 + 主进程按需查询
+- **零自动化测试**：`library.js`/`watcher.js` 本就是按「纯 Node 可单测」
+  设计的，补测的投入产出比极高——本轮新增的用例当场拦下了一处「合法 JSON
+  但缺核心集合的 library.json 被当成空库、随后清扫删光 PDF 副本」的隐患
+
+### 修复记录
+
+逐条变更见 CHANGELOG 的 `[未发布]` 段。回归验证方式：
+
+```bash
+npm test               # library.js / watcher.js 单测
+npm run test:renderer  # 渲染层冒烟台（DOM 桩里真实跑主链路）
+```
+
+### 复现本轮问题的探针（供后续复审复用）
+
+```js
+// 隔离库 → 直接驱动 library.js，不受真实资料库影响
+const library = require('./src/main/library.js')
+library.init(require('os').tmpdir() + '/probe-base', { pointerFile: null })
+// 例：并发导入同一文件（修复前会落两条）
+await Promise.allSettled([library.importPdf(f), library.importPdf(f)])
+```

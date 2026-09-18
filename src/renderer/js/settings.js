@@ -79,13 +79,20 @@ async function openSettings () {
 }
 
 // 写回并广播；应用侧监听后联动界面。失败静默（下次打开面板会读到真实值）
+// 广播的是「实际落库的值」而不是「提交的值」：白名单会拒绝非法值（枚举/下界），
+// 按提交值广播会让界面显示一个其实没存进去的偏好
 async function save (patch) {
+  let stored
   try {
-    await window.solace.updateSettings(patch)
+    stored = await window.solace.updateSettings(patch)
   } catch {
     return
   }
-  window.dispatchEvent(new CustomEvent('solace-settings', { detail: patch }))
+  const applied = {}
+  for (const key of Object.keys(patch)) {
+    if (stored && key in stored) applied[key] = stored[key]
+  }
+  window.dispatchEvent(new CustomEvent('solace-settings', { detail: applied }))
 }
 
 $('#setTheme').addEventListener('change', (e) => save({ theme: e.target.value }))

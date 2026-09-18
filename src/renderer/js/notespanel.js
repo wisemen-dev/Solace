@@ -1,5 +1,5 @@
 import { esc, fmtRel } from './util.js'
-import { askText } from './dialog.js'
+import { askText, askConfirm } from './dialog.js'
 
 // 预览浮层内的笔记面板：列出当前书 notes/<id>/ 下的 .md 文件（目录扫描
 // 为准，最近修改在上）。点条目用 Typora 打开（未找到时询问路径并记住，
@@ -58,11 +58,13 @@ export function closeNotes () {
 
 async function load () {
   if (!doc) return
+  const id = doc.id // 捕获发起时的文档：切书后旧书的清单不能渲染到新书下面
   try {
-    const { notes } = await window.solace.listNotes(doc.id)
-    if (!doc || panel.hidden) return // 等待期间面板已关闭，丢弃结果
+    const { notes } = await window.solace.listNotes(id)
+    if (!doc || doc.id !== id || panel.hidden) return // 期间已切书/已关面板，丢弃结果
     render(notes)
   } catch (err) {
+    if (!doc || doc.id !== id) return
     list.innerHTML = `<li class="notes-empty">加载失败：${esc(err.message || err)}</li>`
   }
 }
@@ -90,7 +92,12 @@ list.addEventListener('click', async (e) => {
   if (!li) return
   const file = li.dataset.file
   if (e.target.closest('.note-del')) {
-    if (confirm(`删除笔记「${displayName(file)}」？\n将移入系统回收站。`)) {
+    const res = await askConfirm({
+      title: '删除笔记',
+      text: `「${displayName(file)}」将移入系统回收站。`,
+      okText: '删除'
+    })
+    if (res) {
       try { await window.solace.trashNote(doc.id, file); load() } catch (err) { window.toast?.(`删除失败：${err.message || err}`) }
     }
     return
@@ -111,7 +118,12 @@ btnBatch.addEventListener('click', () => setNoteBatch(!noteBatch))
 btnDel.addEventListener('click', async () => {
   if (!doc || !noteSel.size) return
   const n = noteSel.size
-  if (!confirm(`删除所选 ${n} 条笔记？\n将移入系统回收站。`)) return
+  const res = await askConfirm({
+    title: `删除所选 ${n} 条笔记`,
+    text: '将移入系统回收站。',
+    okText: '删除'
+  })
+  if (!res) return
   let ok = 0
   for (const file of noteSel) {
     try { await window.solace.trashNote(doc.id, file); ok++ } catch (err) { window.toast?.(`删除失败：${err.message || err}`) }

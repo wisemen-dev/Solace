@@ -17,7 +17,10 @@ const failed = new Map()       // abs -> mtimeMs：导入失败的文件。文�
                                // （mtime 变化）后允许重试，原样不动才跳过
 let notifyQueue = []
 let notifyTimer = null
-let scanning = false
+// 补扫代数：每次 startupScan 递增。不能用布尔防重入——换目录时旧扫描可能
+// 还逐本 importOne 在途（中间有 await），布尔会让新一轮 configure 的补扫被
+// 整体跳过，新目录里「已存在」的 PDF 就只能等下次事件或重启才入库
+let scanSeq = 0
 
 function init (cb) {
   callbacks = cb || {}
@@ -63,6 +66,12 @@ function stop () {
   dir = null
   for (const t of stableTimers.values()) clearTimeout(t)
   stableTimers.clear()
+  // 换目录/停用后旧目录的失败记录与待发通知都没有意义了，一并清掉，
+  // 免得多切几次目录就无限累积（同目录重复 configure 会提前返回，不受影响）
+  failed.clear()
+  clearTimeout(notifyTimer)
+  notifyTimer = null
+  notifyQueue = []
 }
 
 function onEvent (_type, filename) {
@@ -146,10 +155,13 @@ function reportError (message) {
 }
 
 // 启动 / 重新启用时补扫：应用没开着的时候落盘的文件在这里入库。
-// 已入库的会被 importPdf 的内容去重静默挡下，不产生重复条目
+// 已入库的会被 importPdf 的内容去重静默挡下，不产生重复条目。
+// 并发安全：换目录时旧扫描靠「代数已过期」在下一个检查点自行退出，
+// 新目录的补扫总是能开始；短暂并行的两代扫描都汇入 importPdf 的
+// 串行导入链，内容去重保证同一文件不会落两条
 async function startupScan () {
-  if (scanning || !dir) return
-  scanning = true
+  if (!dir) return
+  const gen = ++scanSeq
   try {
     const files = []
     const walk = (p) => {
@@ -163,13 +175,15 @@ async function startupScan () {
     }
     walk(dir)
     for (const f of files) {
-      // 扫描中途被 stop（换目录/关监视）即中断；换了目录后旧目录的残余文件也不再导入
-      if (!watcher || !dir || !f.startsWith(dir + path.sep)) break
+      // 扫描中途被新一轮 configure 取代（换目录/停用/关监视）即中断；
+      // 旧目录的残余文件也不再导入
+      if (gen !== scanSeq || !watcher || !dir || !f.startsWith(dir + path.sep)) return
       if (isFailed(f)) continue
       await importOne(f)
     }
-  } finally {
-    scanning = false
+  } catch {
+    // 单个文件的失败已在 importOne 内消化，这里兜住意外错误：
+    // 补扫是 fire-and-forget 调用的，不能把异常漏成 unhandledRejection
   }
 }
 

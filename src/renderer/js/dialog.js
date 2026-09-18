@@ -5,12 +5,17 @@ export function askText (title, initial = '') {
   return new Promise((resolve) => {
     const dlg = document.querySelector('#inputDialog')
     const input = document.querySelector('#inputDialogInput')
+    const okBtn = document.querySelector('#inputDialogOk')
     document.querySelector('#inputDialogTitle').textContent = title
     input.value = initial
     let settled = false
-    document.querySelector('#inputDialogOk').onclick = () => { settled = true; dlg.close(); resolve(input.value.trim()) }
+    const ok = () => { settled = true; dlg.close(); resolve(input.value.trim()) }
+    okBtn.onclick = ok
     document.querySelector('#inputDialogCancel').onclick = () => { settled = true; dlg.close(); resolve(null) }
     dlg.onclose = () => { if (!settled) resolve(null) }
+    // 无 form 的对话框里 Enter 不会原生触发任何按钮：输入框回车显式接「确定」，
+    // 纯文本录入的标准行为，也顺手消掉了「必须用鼠标点确定」的别扭
+    input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); ok() } }
     dlg.showModal()
     input.focus()
     input.select()
@@ -19,7 +24,9 @@ export function askText (title, initial = '') {
 
 // 通用确认对话框：可带一个勾选项（如删除文档时「同时删除笔记」）。
 // 确认返回 { ok: true, checked: 勾选状态 }；取消/Esc 返回 null。
-export function askConfirm ({ title, text, checkLabel = null, okText = '确定' }) {
+// checkDefault 默认 true（保持旧的「勾选项默认开启」行为）；删除笔记这类
+// 会丢掉用户内容的动作应显式传 false，默认不勾——误按一次回车不该毁东西
+export function askConfirm ({ title, text, checkLabel = null, okText = '确定', checkDefault = true }) {
   return new Promise((resolve) => {
     const dlg = document.querySelector('#confirmDialog')
     const checkRow = document.querySelector('#confirmCheckRow')
@@ -28,7 +35,7 @@ export function askConfirm ({ title, text, checkLabel = null, okText = '确定' 
     document.querySelector('#confirmDialogText').textContent = text
     checkRow.hidden = !checkLabel
     if (checkLabel) document.querySelector('#confirmCheckLabel').textContent = checkLabel
-    check.checked = true
+    check.checked = checkDefault
     let settled = false
     document.querySelector('#confirmDialogOk').textContent = okText
     document.querySelector('#confirmDialogOk').onclick = () => { settled = true; dlg.close(); resolve({ ok: true, checked: check.checked }) }
@@ -68,7 +75,9 @@ export function askChoice ({ title, text, choices }) {
     box.appendChild(cancel)
     dlg.onclose = () => done(null)
     dlg.showModal()
-    // 焦点落在首个动作按钮上：Enter 即确认（与确认对话框行为一致），Esc 原生关闭
+    // 焦点落在首个动作按钮上：Enter 即确认，Esc 原生关闭。
+    // （确认框 askConfirm 刻意不聚焦任何按钮：它的按钮多为「删除」，
+    // 聚焦会让误触回车直接执行破坏性动作；这里的选项是无破坏性的）
     ;(box.querySelector('.btn-primary') || box.querySelector('button'))?.focus()
   })
 }
