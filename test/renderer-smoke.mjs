@@ -601,6 +601,24 @@ check('第二批归档不带上一批残留（d1 仍在原分类）',
   { calls: batchArchiveCalls })
 await fire(el('#btnBatchExit'), 'click')
 
+// 审查复核（误报澄清）：书架态「新建分类」重名时 addCategory 会抛错，
+// 全局点击委托的外层 try/catch 必须兜住并 toast——不能变成未处理 rejection
+const toastTexts = []
+el('#toastBox').appendChild = (t) => toastTexts.push(t.textContent)
+const savedAddCategory = solace.addCategory
+solace.addCategory = () => Promise.reject(new Error('分类已存在: 技术'))
+const pileNewCat = fire(documentStub.body, 'click', {
+  target: { closest: () => ({ dataset: { action: 'pile-newcat' } }) }
+})
+await tick()
+el('#inputDialogInput').value = '技术'
+el('#inputDialogOk').onclick()
+let pileClickSettled = true
+try { await pileNewCat } catch { pileClickSettled = false }
+check('书架新建分类重名报错被外层 catch 兜住（toast 且无未处理 rejection）',
+  pileClickSettled && toastTexts.some(t => String(t).includes('分类已存在')), toastTexts)
+solace.addCategory = savedAddCategory
+
 await fire(el('#btnBatch'), 'click')
 await fire(el('#btnBatchAll'), 'click')
 const archiveCalls = []
