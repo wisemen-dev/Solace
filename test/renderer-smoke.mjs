@@ -570,6 +570,37 @@ solace.getLibrary = realGetLibrary
 calls.lib = snapshot(2, '第二资料库')
 await fire(win, 'solace-library-moved', { detail: { mode: 'adopted', docCount: 2 } })
 
+// 批量归档完成后必须清空选中：否则上一批残留勾选会随下一批一起归档
+// （复现：批 1 勾 d1 归「技术」，批 2 只勾 d2 归「第二类」——修复前 d1
+// 也会被挪进「第二类」）
+currentLib().categories.push({ id: 'c2', name: '第二类', parentId: null })
+const batchArchiveCalls = []
+solace.updateDoc = (id, patch) => {
+  batchArchiveCalls.push(id)
+  const d = currentLib().documents.find(x => x.id === id)
+  if (d) d.categoryId = patch.categoryId
+  return Promise.resolve({})
+}
+const pickCard = (id) => fire(documentStub.body, 'click', {
+  target: { closest: () => ({ dataset: { action: 'preview-doc', id } }) }
+})
+await fire(el('#btnBatch'), 'click')
+await pickCard('d1')
+await fire(el('#batchCategory'), 'change', { target: { value: 'c1' } })
+await tick()
+check('批量归档后选中清零、操作按钮禁用',
+  el('#batchCount').textContent === '已选 0 本' && el('#btnBatchDel').disabled)
+await pickCard('d2')
+await fire(el('#batchCategory'), 'change', { target: { value: 'c2' } })
+await tick()
+const afterBatch = currentLib().documents
+check('第二批归档不带上一批残留（d1 仍在原分类）',
+  batchArchiveCalls.join() === 'd1,d2' &&
+  afterBatch.find(x => x.id === 'd1').categoryId === 'c1' &&
+  afterBatch.find(x => x.id === 'd2').categoryId === 'c2',
+  { calls: batchArchiveCalls })
+await fire(el('#btnBatchExit'), 'click')
+
 await fire(el('#btnBatch'), 'click')
 await fire(el('#btnBatchAll'), 'click')
 const archiveCalls = []

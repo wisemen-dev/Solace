@@ -707,7 +707,9 @@ $('#btnBatchAll').addEventListener('click', () => {
 })
 
 // 批量归档：与拖拽单本归档同语义（直接执行不确认，低风险可逆）。
-// 已在目标分类的选中项跳过并计入提示；执行后保留选中便于连续调整
+// 已在目标分类的选中项跳过并计入提示；归档完成后清空选中——否则上一批
+// 勾选残留进下一批，会把已归好的书一并挪进新选的分类（全部失败时保留，
+// 便于原地重试）
 $('#batchCategory').addEventListener('change', async (e) => {
   if (!data || libraryChanging) return
   const sessionId = data.sessionId
@@ -729,6 +731,7 @@ $('#batchCategory').addEventListener('change', async (e) => {
     catch { /* 过期选中项（已被删除）等，跳过 */ }
   }
   if (!isCurrentLibrary(sessionId)) return
+  if (done > 0) batchSelected.clear() // 本批已落库：选中即视为消费完毕，下一批从零勾起
   refresh()
   const skipped = ids.length - done
   toast(skipped > 0
