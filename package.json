@@ -16,8 +16,8 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/library.test.js test/watcher.test.js",
-    "test:renderer": "node --experimental-vm-modules test/renderer-smoke.mjs",
+    "test": "node --test test/library.test.js test/watcher.test.js test/notes.test.js test/main-ipc.test.js",
+    "test:renderer": "node --experimental-vm-modules test/renderer-smoke.mjs && node --experimental-vm-modules test/preview-notes.test.mjs && node --experimental-vm-modules test/cache-lifecycle.test.mjs && node --experimental-vm-modules test/settings-lifecycle.test.mjs && node --experimental-vm-modules test/palette-lifecycle.test.mjs",
     "dist": "electron-builder --win nsis",
     "icon": "node scripts/make-icon.js"
   },

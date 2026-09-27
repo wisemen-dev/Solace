@@ -3,24 +3,25 @@ const fsp = require('fs/promises')
 const path = require('path')
 const { spawn } = require('child_process')
 const { shell } = require('electron')
+const { assertDocumentId, containedPath } = require('./library-paths')
 
 // 笔记数据层：每本书的笔记是 notes/<docId>/ 下的独立 .md 文件（阅读日志模式）。
 // 目录扫描是唯一事实来源——用户在文件管理器/Typora 里的增删改名，应用重新
 // 打开面板即如实显示，library.json 不登记笔记，与文本索引一样独立于元数据。
 
-let notesRoot = null
+let libraryRoot = null
 let getSettings = null // () => settings，由 main.js 注入（避免与 library.js 循环依赖）
 
 function init (rootDir, settingsGetter) {
-  notesRoot = path.join(rootDir, 'notes')
+  containedPath(rootDir, 'notes')
+  libraryRoot = path.resolve(rootDir)
   getSettings = settingsGetter || (() => ({}))
 }
 
 // docId 是入库时生成的 UUID。渲染进程传来的 id 一律先过白名单再拼路径，
 // 防止路径穿越；删除文档时 library.js 按同一约定清理 notes/<docId>/
 function docDir (docId) {
-  if (!/^[A-Za-z0-9-]{1,64}$/.test(String(docId || ''))) throw new Error('非法文档标识')
-  return path.join(notesRoot, docId)
+  return containedPath(libraryRoot, 'notes', assertDocumentId(docId))
 }
 
 // file 必须是纯文件名（basename），禁止任何路径成分
@@ -29,9 +30,7 @@ function notePath (docId, file) {
   if (!name || name !== name.trim() || /[\\/:*?"<>|]/.test(name) || name.startsWith('.')) {
     throw new Error('非法笔记文件名')
   }
-  const p = path.join(docDir(docId), name)
-  if (!p.startsWith(notesRoot + path.sep)) throw new Error('非法笔记路径')
-  return p
+  return containedPath(libraryRoot, 'notes', assertDocumentId(docId), name)
 }
 
 async function list (docId) {

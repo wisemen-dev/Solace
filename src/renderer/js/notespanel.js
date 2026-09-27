@@ -15,6 +15,19 @@ const btnDel = document.getElementById('btnNoteDel')
 
 let doc = null
 let getPageCtx = null // () => ({ page, total })，新建笔记时取当前阅读页
+let sessionToken = 0
+let loadSeq = 0
+
+function captureSession () {
+  return doc && !panel.hidden
+    ? { id: doc.id, title: doc.title, sessionId: doc.sessionId, token: sessionToken }
+    : null
+}
+
+function isCurrentSession (session) {
+  return !!session && session.token === sessionToken && !panel.hidden &&
+    !!doc && doc.id === session.id && doc.sessionId === session.sessionId
+}
 
 // 批量模式：条目点击改为切换选中，删除整批移入回收站；换书/关面板即复位
 let noteBatch = false
@@ -41,30 +54,34 @@ export function isNotesOpen () {
 }
 
 export function openNotes (d, pageCtx) {
+  if (!d) return
+  sessionToken++
   doc = d
   getPageCtx = pageCtx
   panel.hidden = false
-  load()
+  list.innerHTML = ''
+  setNoteBatch(false)
 }
 
 export function closeNotes () {
+  sessionToken++
+  loadSeq++
   panel.hidden = true
   doc = null
   getPageCtx = null
   list.innerHTML = ''
-  if (noteBatch) setNoteBatch(false)
-  noteSel.clear()
+  setNoteBatch(false)
 }
 
-async function load () {
-  if (!doc) return
-  const id = doc.id // 捕获发起时的文档：切书后旧书的清单不能渲染到新书下面
+async function load (session = captureSession()) {
+  if (!isCurrentSession(session)) return
+  const seq = ++loadSeq
   try {
-    const { notes } = await window.solace.listNotes(id)
-    if (!doc || doc.id !== id || panel.hidden) return // 期间已切书/已关面板，丢弃结果
+    const { notes } = await window.solace.listNotes(session.id, session.sessionId)
+    if (!isCurrentSession(session) || seq !== loadSeq) return
     render(notes)
   } catch (err) {
-    if (!doc || doc.id !== id) return
+    if (!isCurrentSession(session) || seq !== loadSeq) return
     list.innerHTML = `<li class="notes-empty">加载失败：${esc(err.message || err)}</li>`
   }
 }
@@ -87,7 +104,8 @@ function render (notes) {
 }
 
 list.addEventListener('click', async (e) => {
-  if (!doc) return
+  const session = captureSession()
+  if (!session) return
   const li = e.target.closest('li[data-file]')
   if (!li) return
   const file = li.dataset.file
@@ -97,8 +115,14 @@ list.addEventListener('click', async (e) => {
       text: `「${displayName(file)}」将移入系统回收站。`,
       okText: '删除'
     })
-    if (res) {
-      try { await window.solace.trashNote(doc.id, file); load() } catch (err) { window.toast?.(`删除失败：${err.message || err}`) }
+    if (res && isCurrentSession(session)) {
+      try {
+        await window.solace.trashNote(session.id, file, session.sessionId)
+        if (!isCurrentSession(session)) return
+        load(session)
+      } catch (err) {
+        if (isCurrentSession(session)) window.toast?.(`删除失败：${err.message || err}`)
+      }
     }
     return
   }
@@ -110,33 +134,43 @@ list.addEventListener('click', async (e) => {
     updateNoteBar()
     return
   }
-  openOne(file)
+  await openOne(file, session)
 })
 
 btnBatch.addEventListener('click', () => setNoteBatch(!noteBatch))
 
 btnDel.addEventListener('click', async () => {
-  if (!doc || !noteSel.size) return
-  const n = noteSel.size
+  const session = captureSession()
+  const files = [...noteSel]
+  if (!session || !files.length) return
   const res = await askConfirm({
-    title: `删除所选 ${n} 条笔记`,
+    title: `删除所选 ${files.length} 条笔记`,
     text: '将移入系统回收站。',
     okText: '删除'
   })
-  if (!res) return
+  if (!res || !isCurrentSession(session)) return
   let ok = 0
-  for (const file of noteSel) {
-    try { await window.solace.trashNote(doc.id, file); ok++ } catch (err) { window.toast?.(`删除失败：${err.message || err}`) }
+  for (const file of files) {
+    try {
+      await window.solace.trashNote(session.id, file, session.sessionId)
+      if (!isCurrentSession(session)) return
+      ok++
+    } catch (err) {
+      if (!isCurrentSession(session)) return
+      window.toast?.(`删除失败：${err.message || err}`)
+    }
   }
-  noteSel.clear()
+  for (const file of files) noteSel.delete(file)
   updateNoteBar()
-  load()
+  load(session)
   if (ok) window.toast?.(`已删除 ${ok} 条笔记`)
 })
 
-async function openOne (file) {
+async function openOne (file, session) {
+  if (!isCurrentSession(session)) return
   try {
-    const res = await window.solace.openNote(doc.id, file)
+    const res = await window.solace.openNote(session.id, file, {}, session.sessionId)
+    if (!isCurrentSession(session)) return
     if (res.opened) {
       if (res.editor === 'default') window.toast?.('未找到 Typora，已用系统默认程序打开')
       return
@@ -145,34 +179,44 @@ async function openOne (file) {
     if (res.needEditor) {
       // 没探测到 Typora 且未设置路径：问一次并记住；留空则回退系统默认
       const prev = (await window.solace.getLibrary()).settings?.notesEditorPath || ''
+      if (!isCurrentSession(session)) return
       const p = await askText('未检测到 Typora——输入 Typora.exe 完整路径（留空用系统默认）', prev)
-      if (p) await window.solace.updateSettings({ notesEditorPath: p })
-      const retry = await window.solace.openNote(doc.id, file, p ? {} : { forceDefault: true })
+      if (p === null || !isCurrentSession(session)) return
+      if (p) {
+        await window.solace.updateSettings({ notesEditorPath: p }, session.sessionId)
+        if (!isCurrentSession(session)) return
+      }
+      const retry = await window.solace.openNote(session.id, file, p ? {} : { forceDefault: true }, session.sessionId)
+      if (!isCurrentSession(session)) return
       if (retry.error) window.toast?.(retry.error)
       else if (!p) window.toast?.('已用系统默认程序打开')
     }
   } catch (err) {
-    window.toast?.(`打开失败：${err.message || err}`)
+    if (isCurrentSession(session)) window.toast?.(`打开失败：${err.message || err}`)
   }
 }
 
 btnNew.addEventListener('click', async () => {
-  if (!doc) return
+  const session = captureSession()
+  if (!session) return
   const ctx = getPageCtx ? getPageCtx() : {}
   try {
-    const { file } = await window.solace.createNote(doc.id, { title: doc.title, page: ctx.page, total: ctx.total })
-    load()
-    openOne(file)
+    const { file } = await window.solace.createNote(session.id, { title: session.title, page: ctx.page, total: ctx.total }, session.sessionId)
+    if (!isCurrentSession(session)) return
+    load(session)
+    await openOne(file, session)
   } catch (err) {
-    window.toast?.(`新建失败：${err.message || err}`)
+    if (isCurrentSession(session)) window.toast?.(`新建失败：${err.message || err}`)
   }
 })
 
 btnReveal.addEventListener('click', async () => {
-  if (!doc) return
+  const session = captureSession()
+  if (!session) return
   try {
-    const { notes } = await window.solace.listNotes(doc.id)
+    const { notes } = await window.solace.listNotes(session.id, session.sessionId)
+    if (!isCurrentSession(session)) return
     if (!notes.length) { window.toast?.('这本书还没有笔记'); return }
-    window.solace.revealNote(doc.id, notes[0].file)
+    await window.solace.revealNote(session.id, notes[0].file, session.sessionId)
   } catch { /* 忽略：定位失败无副作用 */ }
 })

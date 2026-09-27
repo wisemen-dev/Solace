@@ -8,6 +8,7 @@ const assert = require('node:assert/strict')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const { EventEmitter } = require('events')
 
 const library = require('../src/main/library.js')
 const watcher = require('../src/main/watcher.js')
@@ -33,8 +34,30 @@ function setup () {
 }
 
 function teardown () {
-  watcher.configure({}) // 停掉监视，避免句柄泄漏到下一个用例
+  watcher.stop() // 停掉监视，避免句柄泄漏到下一个用例
 }
+
+function deferred () {
+  let resolve
+  let reject
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+
+function stubWatch (t) {
+  const handles = []
+  t.mock.method(fs, 'watch', (_dir, _opts, onEvent) => {
+    const handle = new EventEmitter()
+    handle.closed = false
+    handle.close = () => { handle.closed = true }
+    handle.change = (file) => onEvent('rename', file)
+    handles.push(handle)
+    return handle
+  })
+  return handles
+}
+
+const flushAsync = () => new Promise(resolve => setImmediate(resolve))
 
 async function waitFor (fn, timeout = 9000, step = 100) {
   const t0 = Date.now()
@@ -145,8 +168,14 @@ test('自动入库归入指定分类', async () => {
   } finally { teardown() }
 })
 
-test('重复 configure 同一目录不会重复导入或重启监视', async () => {
+test('重复 configure 同一目录不会重复导入或重启监视', async (t) => {
   setup()
+  const watchCalls = []
+  const realWatch = fs.watch
+  t.mock.method(fs, 'watch', (...args) => {
+    watchCalls.push(args[0])
+    return realWatch(...args)
+  })
   try {
     watcher.configure({ watchFolder: watchDir, watchEnabled: true })
     writePdf(watchDir, 'once.pdf', 8)
@@ -157,6 +186,7 @@ test('重复 configure 同一目录不会重复导入或重启监视', async () 
     watcher.configure({ watchFolder: watchDir, watchEnabled: true, confetti: true })
     await new Promise(r => setTimeout(r, 1200))
     assert.equal(library.getData().documents.length, 1, '重复 configure 不该产生第二条目')
+    assert.equal(watchCalls.length, 1, '同目录同库只应创建一个监视句柄')
     assert.deepEqual(errors, [])
   } finally { teardown() }
 })
@@ -181,3 +211,155 @@ test('换目录时上一轮补扫在途：新目录的存量文件仍会被补�
     assert.deepEqual(errors, [])
   } finally { teardown() }
 })
+
+test('停用时取消已经排队的启动补扫，不写入资料库', async (t) => {
+  setup()
+  stubWatch(t)
+  const requests = []
+  const realImport = library.importPdf
+  t.mock.method(library, 'importPdf', (file, opts) => {
+    const promise = realImport(file, opts)
+    requests.push({ promise, opts })
+    return promise
+  })
+  try {
+    writePdf(watchDir, 'cancelled.pdf', 30)
+    watcher.configure({ watchFolder: watchDir, watchEnabled: true })
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].opts.sessionId, library.getSessionId())
+
+    watcher.stop()
+    const [result] = await Promise.allSettled(requests.map(r => r.promise))
+    await flushAsync()
+
+    assert.equal(requests[0].opts.signal.aborted, true)
+    assert.equal(result.status, 'rejected')
+    assert.equal(result.reason.name, 'AbortError')
+    assert.deepEqual(library.getData().documents, [])
+    assert.deepEqual(fs.readdirSync(path.join(root, 'files')), [])
+    assert.deepEqual(imported, [])
+    assert.deepEqual(errors, [])
+  } finally { teardown() }
+})
+
+test('切库后监视同一目录也重新补扫，旧库通知不会混入新库', async (t) => {
+  setup()
+  const handles = stubWatch(t)
+  try {
+    writePdf(watchDir, 'shared-inbox.pdf', 31)
+    const settings = { watchFolder: watchDir, watchEnabled: true }
+    watcher.configure(settings)
+    const oldDoc = await waitFor(() => library.getData().documents[0])
+    assert.ok(oldDoc)
+    const oldSessionId = library.getSessionId()
+
+    library.init(path.join(base, 'other-library'), { pointerFile: null })
+    assert.notEqual(library.getSessionId(), oldSessionId)
+    watcher.configure(settings)
+    const newDoc = await waitFor(() => library.getData().documents[0])
+    assert.ok(newDoc, '相同监视目录的存量文件也必须导入新库')
+    assert.notEqual(newDoc.id, oldDoc.id)
+    assert.equal(handles.length, 2)
+    assert.equal(handles[0].closed, true)
+    assert.ok(fs.existsSync(path.join(root, 'files', `${oldDoc.id}.pdf`)))
+    assert.ok(fs.existsSync(path.join(library.getRootDir(), 'files', `${newDoc.id}.pdf`)))
+    assert.ok(await waitFor(() => imported.some(d => d.id === newDoc.id)))
+    assert.deepEqual(imported.map(d => d.id), [newDoc.id])
+    assert.deepEqual(errors, [])
+  } finally { teardown() }
+})
+
+test('旧监视器的事件和 error 不会停止或污染新监视器', async (t) => {
+  setup()
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const handles = stubWatch(t)
+  const requests = []
+  t.mock.method(library, 'importPdf', async (file) => {
+    requests.push(file)
+    return { id: 'live-doc', title: 'live' }
+  })
+  try {
+    watcher.configure({ watchFolder: watchDir, watchEnabled: true })
+    const nextDir = path.join(base, 'next-inbox')
+    fs.mkdirSync(nextDir)
+    watcher.configure({ watchFolder: nextDir, watchEnabled: true })
+    writePdf(nextDir, 'stale.pdf', 32)
+    writePdf(nextDir, 'live.pdf', 33)
+
+    handles[0].change('stale.pdf')
+    handles[0].emit('error', new Error('late error from closed watcher'))
+    assert.equal(handles[1].closed, false)
+    handles[1].change('live.pdf')
+    t.mock.timers.tick(1200)
+    t.mock.timers.tick(900)
+    await flushAsync()
+    t.mock.timers.tick(800)
+
+    assert.deepEqual(requests, [path.join(nextDir, 'live.pdf')])
+    assert.deepEqual(imported, [{ id: 'live-doc', title: 'live' }])
+    assert.deepEqual(errors, [])
+  } finally { teardown() }
+})
+
+test('稳定判定期间停用再启用同一目录，旧计时任务不能恢复', async (t) => {
+  setup()
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const handles = stubWatch(t)
+  const requests = []
+  t.mock.method(library, 'importPdf', async (file) => {
+    requests.push(file)
+    return { id: 'current-doc', title: 'current' }
+  })
+  try {
+    const settings = { watchFolder: watchDir, watchEnabled: true }
+    watcher.configure(settings)
+    const file = writePdf(watchDir, 'current.pdf', 34)
+    handles[0].change('current.pdf')
+    t.mock.timers.tick(1200)
+
+    watcher.stop()
+    watcher.configure(settings)
+    await flushAsync()
+    t.mock.timers.tick(1700)
+    await flushAsync()
+
+    assert.deepEqual(requests, [file], '只允许新一轮启动补扫导入一次')
+    assert.deepEqual(imported, [{ id: 'current-doc', title: 'current' }])
+    assert.deepEqual(errors, [])
+  } finally { teardown() }
+})
+
+for (const rejectOld of [false, true]) {
+  test(`换目录后旧导入${rejectOld ? '失败' : '成功'}，不再归类或通知`, async (t) => {
+    setup()
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    stubWatch(t)
+    const oldImport = deferred()
+    const requests = []
+    const updates = []
+    t.mock.method(library, 'importPdf', (file, opts) => {
+      requests.push({ file, opts })
+      return oldImport.promise
+    })
+    t.mock.method(library, 'updateDoc', (...args) => updates.push(args))
+    try {
+      const cat = library.addCategory('下载')
+      writePdf(watchDir, 'old.pdf', 35)
+      watcher.configure({ watchFolder: watchDir, watchEnabled: true, watchCategory: cat.id })
+      assert.equal(requests.length, 1)
+
+      const nextDir = path.join(base, 'next-inbox')
+      fs.mkdirSync(nextDir)
+      watcher.configure({ watchFolder: nextDir, watchEnabled: true, watchCategory: cat.id })
+      assert.equal(requests[0].opts.signal.aborted, true)
+      if (rejectOld) oldImport.reject(new Error('late import failure'))
+      else oldImport.resolve({ id: 'old-doc', title: 'old' })
+      await flushAsync()
+      t.mock.timers.tick(1000)
+
+      assert.deepEqual(updates, [])
+      assert.deepEqual(imported, [])
+      assert.deepEqual(errors, [])
+    } finally { teardown() }
+  })
+}

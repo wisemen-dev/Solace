@@ -2,15 +2,19 @@ import pdfjsLib, { docParams } from './pdfjs.js'
 import { burst } from './confetti.js'
 import { openNotes, closeNotes, isNotesOpen } from './notespanel.js'
 import { esc } from './util.js'
+import { fitPageViewport } from './pdfcanvas.js'
 
 let pdf = null
 let pageNum = 0
-let rendering = false
-let rerenderPending = false
+let loadingTask = null
+let renderState = null
+let canvasTask = null
 let currentDoc = null     // 阅读进度归属的文档
 let readMarked = false    // 本次会话是否已记过阅读足迹（只在第一次真实翻页时记）
 let pendingProgress = null // 待落库的进度 { doc, page, total }，绑定所属文档防切书串写
 let progressTimer = null
+let progressWrites = Promise.resolve()
+const failedProgress = new Map()
 let resumeEnabled = true  // 设置面板「恢复上次阅读位置」开关（app.js 注入）
 const lastPctByDoc = new Map() // docId -> 本会话上次记录的进度百分比，判定「读毕」瞬间
 // 会话代数：每次开/关预览递增。在途渲染、在途大纲解析都只认自己那一代的结果，
@@ -34,41 +38,60 @@ const pageTotal = document.getElementById('pageTotal')
 const errBox = document.getElementById('previewError')
 const errText = document.getElementById('previewErrorText')
 
+function isCurrentSession (token, pdfDoc) {
+  return token === sessionToken && !overlay.hidden && !!currentDoc &&
+    (pdfDoc === undefined || pdfDoc === pdf)
+}
+
+function destroyDocument (target) {
+  try { Promise.resolve(target?.destroy()).catch(() => {}) } catch { /* 已销毁 */ }
+}
+
+function resetDocument () {
+  sessionToken++
+  renderState = null
+  try { canvasTask?.cancel() } catch { /* 已结束 */ }
+  const old = loadingTask || pdf
+  loadingTask = null
+  pdf = null
+  destroyDocument(old)
+  pageNum = 0
+  pageJump.value = ''
+  pageTotal.textContent = '0'
+  tocBtn.hidden = true
+  tocPanel.hidden = true
+  tocList.innerHTML = ''
+  errBox.hidden = true
+  canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height)
+}
+
 // jumpPage：全文搜索命中时跳转的起始页（null 则从第 1 页开始）
 export function openPreview (doc, jumpPage = null) {
   if (!doc) return
   // 切书前先把上一本的待写进度立刻落库：进度绑定在 pendingProgress.doc 上，
   // 即使 600ms 防抖窗口内经命令面板换书，也只会写到原来的书上
-  if (pendingProgress) flushProgress()
+  flushProgress().catch(reportProgressError)
+  resetDocument()
   currentDoc = doc
   readMarked = false
-  sessionToken++ // 上一本的（哪怕还没渲染完的）结果就此作废
-  rerenderPending = false
   window.currentPreviewId = doc.id
   document.getElementById('previewTitle').textContent = doc.title
   closeNotes() // 换书/重开时重置笔记面板
   overlay.hidden = false
-  loadDoc(doc.id, jumpPage)
+  loadDoc(doc, jumpPage, sessionToken)
 }
 
 export function closePreview () {
   // 关闭前把还没落库的进度立刻写掉，避免丢掉最后翻到的那一页。
   // 返回落库的 Promise：调用方（app.js）须等它完成再刷新列表，
   // 否则 getLibrary 与 setProgress 并发竞争，会读回旧进度。
-  clearTimeout(progressTimer)
   const flushed = flushProgress()
-  sessionToken++ // 作废在途渲染/大纲，它们不该再往界面上写东西
-  rerenderPending = false
+  resetDocument()
   closeNotes()
   errBox.hidden = true
   overlay.hidden = true
   window.currentPreviewId = null
   currentDoc = null
-  if (pdf) { pdf.destroy(); pdf = null }
-  pageNum = 0
-  tocPanel.hidden = true
-  const ctx = canvas.getContext('2d')
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
   return flushed
 }
 
@@ -76,19 +99,21 @@ export function isPreviewOpen () {
   return !overlay.hidden
 }
 
-async function loadDoc (id, jumpPage) {
-  // 过期判定：加载是异步的，期间用户可能已关闭浮层或切到别的书（currentDoc 变化）
-  const stale = () => overlay.hidden || !currentDoc || currentDoc.id !== id
+async function loadDoc (doc, jumpPage, token) {
+  const { id, sessionId } = doc
   try {
-    const buffer = await window.solace.readPreview(id)
+    const buffer = await window.solace.readPreview(id, sessionId)
+    if (!isCurrentSession(token)) return
     // IPC 送来的就是 Uint8Array，直接用（再包一层 new Uint8Array 会白复制
     // 一整份文件——大 PDF 上就是几十 MB 的无谓内存与耗时）
     const data = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
-    const pdfDoc = await pdfjsLib.getDocument({ data, ...docParams }).promise
+    const task = pdfjsLib.getDocument({ data, ...docParams })
+    loadingTask = task
+    const pdfDoc = await task.promise
     // 过期结果必须销毁丢弃：否则会把已关闭的预览「复活」——pdf 挂着永不
     // destroy（内存泄漏）、往隐藏的 canvas 渲染
-    if (stale()) {
-      pdfDoc.destroy()
+    if (!isCurrentSession(token)) {
+      destroyDocument(pdfDoc)
       return
     }
     pdf = pdfDoc
@@ -105,12 +130,12 @@ async function loadDoc (id, jumpPage) {
     updatePageIndicator()
     renderPage()
     scheduleProgress()
-    loadOutline(pdfDoc, id)
+    loadOutline(pdfDoc, token)
   } catch (err) {
     // 失败时浮层可能已被用户关闭或已切书：这是过期加载，静默放弃，
     // 既不关闭当前预览也不弹错误打扰
-    if (stale()) return
-    closePreview()
+    if (!isCurrentSession(token)) return
+    closePreview().catch(reportProgressError)
     const msg = err && err.name === 'PasswordException'
       ? '此 PDF 已加密，内置预览无法打开。请用卡片上的「打开」按钮在外部阅读器中阅读。'
       : `预览加载失败：${err.message || err}`
@@ -127,44 +152,50 @@ function updatePageIndicator () {
 // Canvas 有单边像素上限（Chromium 约 32767，超限得到空白画布），大幅面
 // PDF（图纸/海报）在高 DPI 屏上按 dpr 放大后很容易越界——表现为「整页
 // 空白」，这里按上限回退缩放，宁可整页缩小显示也不空白
-const MAX_CANVAS_SIDE = 8192
-
 async function renderPage () {
-  if (!pdf) return // 没有文档就不排队（早先会置 rerenderPending 让标志卡住）
-  if (rendering) { rerenderPending = true; return }
+  if (!pdf) return
+  if (renderState) { renderState.pending = true; return }
   const token = sessionToken
-  rendering = true
+  const pdfDoc = pdf
+  const targetPage = pageNum
+  const state = { token, pending: false, task: null }
+  renderState = state
   errBox.hidden = true
   try {
-    const page = await pdf.getPage(pageNum)
+    const page = await pdfDoc.getPage(targetPage)
+    if (!isCurrentSession(token, pdfDoc)) return
+    // 取消旧会话的画布任务后等其释放 canvas；旧 getPage 则直接由 token 丢弃。
+    if (canvasTask) await canvasTask.promise.catch(() => {})
+    if (!isCurrentSession(token, pdfDoc)) return
     const fitWidth = Math.min(1100, body.clientWidth - 36)
     const base = page.getViewport({ scale: 1 })
 
     // 按设备像素比渲染，保证文字清晰
     const dpr = window.devicePixelRatio || 1
-    let scale = Math.max(0.2, fitWidth / base.width)
-    const capped = Math.min(MAX_CANVAS_SIDE / (base.width * dpr), MAX_CANVAS_SIDE / (base.height * dpr))
-    if (scale > capped) scale = Math.max(0.05, capped)
-    const viewport = page.getViewport({ scale: scale * dpr })
-    canvas.width = Math.floor(viewport.width)
-    canvas.height = Math.floor(viewport.height)
-    canvas.style.width = Math.floor(base.width * scale) + 'px'
-    canvas.style.height = Math.floor(base.height * scale) + 'px'
+    const fitted = fitPageViewport(page, Math.max(0.2, fitWidth / base.width) * dpr)
+    canvas.width = fitted.width
+    canvas.height = fitted.height
+    canvas.style.width = (fitted.viewport.width / dpr) + 'px'
+    canvas.style.height = (fitted.viewport.height / dpr) + 'px'
 
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
+    const task = page.render({ canvasContext: canvas.getContext('2d'), viewport: fitted.viewport })
+    state.task = task
+    canvasTask = task
+    await task.promise
+    if (!isCurrentSession(token, pdfDoc)) return
   } catch (err) {
     // 关闭预览时 pdf.destroy() 会打断在途渲染，这里报的「失败」并不是真失败：
     // 只在仍属于当前会话时才写错误浮层
-    if (token !== sessionToken) return
+    if (!isCurrentSession(token, pdfDoc)) return
     // 渲染失败不再静默白屏：明确告知页码与原因，并给出出路
-    errText.textContent = `第 ${pageNum} 页渲染失败（${String(err.message || err)}）。` +
+    errText.textContent = `第 ${targetPage} 页渲染失败（${String(err.message || err)}）。` +
       '可能是内置预览引擎（pdf.js）对此文件的兼容性限制，可点顶栏「外部打开」阅读本书。'
     errBox.hidden = false
   } finally {
-    rendering = false
-    if (rerenderPending) {
-      rerenderPending = false
-      if (token === sessionToken) renderPage()
+    if (canvasTask === state.task) canvasTask = null
+    if (renderState === state) {
+      renderState = null
+      if (state.pending && isCurrentSession(token, pdfDoc)) renderPage()
     }
   }
 }
@@ -180,9 +211,9 @@ function pctOf (doc) {
 function scheduleProgress () {
   if (!currentDoc || !pdf) return
   // 绑定 doc：防抖窗口内切书（如 Ctrl+K 换书）也不会把这本的页码写到别的书上
-  pendingProgress = { doc: currentDoc, page: pageNum, total: pdf.numPages }
+  pendingProgress = { doc: currentDoc, page: pageNum, total: pdf.numPages, token: sessionToken }
   clearTimeout(progressTimer)
-  progressTimer = setTimeout(flushProgress, 600)
+  progressTimer = setTimeout(() => flushProgress().catch(reportProgressError), 600)
 }
 
 // 足迹：用户真实翻页（按钮/键盘/目录跳转）才算读过一次——打开即关、
@@ -190,23 +221,43 @@ function scheduleProgress () {
 function markReadOnce () {
   if (readMarked || !currentDoc) return
   readMarked = true
-  window.solace.markRead(currentDoc.id).catch(() => { /* 足迹失败不影响阅读 */ })
+  window.solace.markRead(currentDoc.id, currentDoc.sessionId).catch(() => { /* 足迹失败不影响阅读 */ })
 }
 
-async function flushProgress () {
-  if (!pendingProgress) return
-  // 落库对象取自 pendingProgress.doc（捕获时的文档），而非调用时刻的 currentDoc：
-  // 定时器触发时用户可能已切到别的书，按 currentDoc 写会把进度记错
-  const { doc, page, total } = pendingProgress
+function flushProgress () {
+  clearTimeout(progressTimer)
+  const entries = new Map(failedProgress)
+  failedProgress.clear()
+  if (pendingProgress) entries.set(progressKey(pendingProgress), pendingProgress)
   pendingProgress = null
+  for (const entry of entries.values()) {
+    const write = () => writeProgress(entry)
+    progressWrites = progressWrites.then(write, write)
+  }
+  return progressWrites.then(() => {
+    if (failedProgress.size) throw failedProgress.values().next().value.error
+  })
+}
+
+const progressKey = ({ doc }) => JSON.stringify([doc.sessionId, doc.id])
+
+function reportProgressError (err) {
+  window.toast?.(`保存阅读进度失败：${err.message || err}`, 6000)
+}
+
+async function writeProgress (entry) {
+  const { doc, page, total, token } = entry
   const pct = total >= 1 ? Math.min(100, Math.round(page / total * 100)) : 0
   const finished = pct >= 100 && (lastPctByDoc.get(doc.id) || 0) < 100
   lastPctByDoc.set(doc.id, pct)
   try {
-    await window.solace.setProgress(doc.id, page, total)
-  } catch {
-    return
+    await window.solace.setProgress(doc.id, page, total, doc.sessionId)
+  } catch (error) {
+    failedProgress.set(progressKey(entry), { ...entry, error })
+    throw error
   }
+  failedProgress.delete(progressKey(entry))
+  if (!isCurrentSession(token)) return
   if (finished) {
     const r = body.getBoundingClientRect()
     burst(r.left + r.width / 2, r.top + r.height / 3)
@@ -218,18 +269,18 @@ async function flushProgress () {
 
 // 大纲解析是异步的，期间用户可能关闭预览或切换文档：所有调用都绑定 pdfDoc，
 // 完成后核对它仍是当前文档才渲染。
-async function loadOutline (pdfDoc, docId) {
+async function loadOutline (pdfDoc, token) {
   tocBtn.hidden = true
   tocPanel.hidden = true
   tocList.innerHTML = ''
   let flat
   try {
     const outline = await pdfDoc.getOutline()
-    if (pdfDoc !== pdf || !currentDoc || currentDoc.id !== docId) return
+    if (!isCurrentSession(token, pdfDoc)) return
     if (!outline || !outline.length) return
     flat = []
-    await flattenOutline(pdfDoc, outline, 0, flat)
-    if (pdfDoc !== pdf) return
+    await flattenOutline(pdfDoc, outline, 0, flat, token)
+    if (!isCurrentSession(token, pdfDoc)) return
   } catch {
     return
   }
@@ -243,17 +294,27 @@ async function loadOutline (pdfDoc, docId) {
     </li>`).join('')
 }
 
-async function flattenOutline (pdfDoc, items, depth, out) {
+async function flattenOutline (pdfDoc, items, depth, out, token) {
   for (const it of items) {
-    out.push({ title: it.title || '（无标题）', depth, page: await destToPage(pdfDoc, it.dest) })
-    if (Array.isArray(it.items) && it.items.length) await flattenOutline(pdfDoc, it.items, depth + 1, out)
+    const page = await destToPage(pdfDoc, it.dest, token)
+    if (!isCurrentSession(token, pdfDoc)) return
+    out.push({ title: it.title || '（无标题）', depth, page })
+    if (Array.isArray(it.items) && it.items.length) {
+      await flattenOutline(pdfDoc, it.items, depth + 1, out, token)
+      if (!isCurrentSession(token, pdfDoc)) return
+    }
   }
 }
 
-async function destToPage (pdfDoc, dest) {
+async function destToPage (pdfDoc, dest, token) {
   try {
     const d = typeof dest === 'string' ? await pdfDoc.getDestination(dest) : dest
-    if (Array.isArray(d) && d[0]) return (await pdfDoc.getPageIndex(d[0])) + 1
+    if (!isCurrentSession(token, pdfDoc)) return null
+    if (Array.isArray(d) && d[0]) {
+      const index = await pdfDoc.getPageIndex(d[0])
+      if (!isCurrentSession(token, pdfDoc)) return null
+      return index + 1
+    }
   } catch { /* 定位失败的条目置灰显示 */ }
   return null
 }

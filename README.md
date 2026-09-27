@@ -60,8 +60,8 @@ npm start
 回归测试：
 
 ```bash
-npm test              # 数据层与监视器单测（纯 Node，不依赖 Electron）
-npm run test:renderer # 渲染层冒烟台（DOM 桩里真实跑 app.js 主链路）
+npm test              # 资料库、监视器、笔记与 IPC 回归（Electron 接口使用桩）
+npm run test:renderer # 主界面冒烟及预览、笔记、缓存、设置和切库竞态回归
 ```
 
 ## 推荐搭配
@@ -97,7 +97,7 @@ Solace_Rust/
 ├── src/
 │   ├── main/        # Electron 主进程：窗口、IPC、资料库数据层、目录监视
 │   └── renderer/    # 渲染进程：界面、样式、pdf.js 预览
-├── test/            # 回归测试：library/watcher 单测 + 渲染层冒烟台
+├── test/            # 数据层与 IPC 测试、渲染层冒烟及异步生命周期回归
 ├── scripts/         # 开发脚本：图标生成、示例 PDF 生成
 ├── docs/
 │   └── INIT_LOG.md  # 初始化与环境记录（问题追踪从这里开始）
@@ -109,6 +109,11 @@ Solace_Rust/
 
 资料库默认位于系统用户数据目录：
 `%APPDATA%/solace/SolaceLibrary/`
+
+可在设置中移动整库或切换已有资料库。自选资料库的位置无法访问、元数据损坏，
+或位置记录无法读取时，启动会提示重试、明确使用默认库或退出，避免在不知情时
+把新书写入另一份库。选择默认库后会更新位置记录，下次启动继续使用默认库。
+切换前会等待阅读进度保存；保存或移动失败会恢复当前库的浏览和搜索。
 
 ```
 SolaceLibrary/

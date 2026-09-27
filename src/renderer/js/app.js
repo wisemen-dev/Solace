@@ -1,7 +1,7 @@
 import { openPreview, isPreviewOpen, setResumeEnabled } from './preview.js'
 import { ensureCover, coverCache, clearCoverCache } from './covers.js'
 import { burst, setConfettiEnabled } from './confetti.js'
-import { initIndex, ensureQueued, setIndexPageLimit, textHit, searchTextIndex } from './textindex.js'
+import { initIndex, resetIndex, ensureQueued, setIndexPageLimit, textHit, searchTextIndex } from './textindex.js'
 import { initTheme, cycleTheme, themeLabel, applyTheme } from './theme.js'
 import { normText, esc, fmtRel } from './util.js'
 import { askText, askConfirm } from './dialog.js'
@@ -9,6 +9,8 @@ import './palette.js' // 命令面板：自带事件注册，引入即生效
 import './settings.js' // 设置面板：自带事件注册，引入即生效
 
 let data = null
+let refreshSeq = 0
+let libraryChanging = false
 const filters = { categoryId: undefined, tagId: null, keyword: '' }
 let dragDocId = null
 const DEFAULT_DORMANT_DAYS = 30
@@ -61,12 +63,26 @@ function initSessionView () {
 
 const $ = (sel) => document.querySelector(sel)
 
+function isCurrentLibrary (sessionId) {
+  return !libraryChanging && data && data.sessionId === sessionId
+}
+
 /* ================= 初始化 ================= */
 
 refresh()
 
 async function refresh () {
-  data = await window.solace.getLibrary()
+  if (libraryChanging) return
+  const ticket = ++refreshSeq
+  let next
+  try {
+    next = await window.solace.getLibrary()
+  } catch (err) {
+    if (ticket === refreshSeq) toast(`资料库读取失败：${err.message || err}`)
+    return
+  }
+  if (libraryChanging || ticket !== refreshSeq || (data && next.sessionId < data.sessionId)) return
+  data = next
   Object.assign(prefs, data.settings || {})
   if (sessionView === null) initSessionView() // 首帧（或刚切过库）才从设置取
   applySettingFlags()
@@ -74,7 +90,7 @@ async function refresh () {
   syncViewButton()
   renderAll()
   // 每次刷新都同步一次索引状态：缺索引的书会排进后台提取队列
-  initIndex(data.documents)
+  initIndex(data.documents, data.sessionId)
   // 开馆动画只播一次：首帧渲染完成后即解除（设置关闭时立即解除不播动画）
   localStorage.setItem('solace-opening', prefs.openingAnimation === false ? 'off' : 'on')
   setTimeout(() => document.body.classList.remove('opening'), prefs.openingAnimation === false ? 0 : 1600)
@@ -269,10 +285,13 @@ let searchTicket = 0
 
 function scheduleFullText (delay) {
   clearTimeout(searchTimer)
+  if (libraryChanging) return
+  const sessionId = data.sessionId
   const ticket = ++searchTicket
   searchTimer = setTimeout(async () => {
-    await searchTextIndex(filters.keyword)
-    if (ticket !== searchTicket) return
+    if (!isCurrentLibrary(sessionId)) return
+    await searchTextIndex(filters.keyword, sessionId)
+    if (ticket !== searchTicket || !isCurrentLibrary(sessionId)) return
     renderDocList()
   }, delay)
 }
@@ -290,9 +309,11 @@ function onKeywordTyped (kw) {
 // 返回 false 表示期间用户又改了搜索词，本次渲染作废
 async function refreshTextHits (kw) {
   clearTimeout(searchTimer)
+  if (libraryChanging) return false
+  const sessionId = data.sessionId
   const ticket = ++searchTicket
-  await searchTextIndex(kw)
-  return ticket === searchTicket
+  await searchTextIndex(kw, sessionId)
+  return ticket === searchTicket && isCurrentLibrary(sessionId)
 }
 
 /* ================= 主区：陈列视图 =================
@@ -443,6 +464,8 @@ function syncViewButton () {
 }
 
 $('#btnView').addEventListener('click', async () => {
+  if (!data || libraryChanging) return
+  const sessionId = data.sessionId
   exitBatch() // 批量管理只在封面墙提供：切视图即退出
   fromShelf = false // 用户主动切视图：回退语义失效
   entrancePending = true // 明确的视图切换：播放入场编排
@@ -459,12 +482,15 @@ $('#btnView').addEventListener('click', async () => {
   }
   syncViewButton()
   renderAll()
-  try { await window.solace.updateSettings({ viewMode: next }) } catch { /* 保存失败不影响本次切换 */ }
+  try { await window.solace.updateSettings({ viewMode: next }, sessionId) } catch { /* 保存失败不影响本次切换 */ }
 })
 
 $('#btnTheme').addEventListener('click', async () => {
+  if (!data || libraryChanging) return
+  const sessionId = data.sessionId
   const patch = cycleTheme(prefs)
-  try { await window.solace.updateSettings(patch) } catch { /* 保存失败不影响本次切换 */ }
+  try { await window.solace.updateSettings(patch, sessionId) } catch { /* 保存失败不影响本次切换 */ }
+  if (!isCurrentLibrary(sessionId)) return
   toast(`主题：${themeLabel()}`)
 })
 
@@ -475,7 +501,7 @@ const coverObserver = new IntersectionObserver((entries) => {
     const img = en.target
     coverObserver.unobserve(img)
     const doc = data && data.documents.find(x => x.id === img.dataset.docId)
-    if (doc) ensureCover(doc, img)
+    if (doc && !libraryChanging) ensureCover(doc, img, data.sessionId)
   }
 }, { root: document.getElementById('docGrid'), rootMargin: '120px' })
 
@@ -600,7 +626,7 @@ function backToShelf () {
   entrancePending = true
   syncViewButton()
   renderAll()
-  window.solace.updateSettings({ viewMode: 'shelf' }).catch(() => {})
+  window.solace.updateSettings({ viewMode: 'shelf' }, data.sessionId).catch(() => {})
   $('#docGrid').scrollTo({ top: 0 })
 }
 
@@ -683,6 +709,8 @@ $('#btnBatchAll').addEventListener('click', () => {
 // 批量归档：与拖拽单本归档同语义（直接执行不确认，低风险可逆）。
 // 已在目标分类的选中项跳过并计入提示；执行后保留选中便于连续调整
 $('#batchCategory').addEventListener('change', async (e) => {
+  if (!data || libraryChanging) return
+  const sessionId = data.sessionId
   const v = e.target.value
   e.target.value = '' // 下拉只当菜单用，用完即归位到占位项
   if (!v || !batchMode || !batchSelected.size) return
@@ -696,9 +724,11 @@ $('#batchCategory').addEventListener('change', async (e) => {
   if (!ids.length) { toast(`所选书籍已全部在「${name}」`); return }
   let done = 0
   for (const id of ids) {
-    try { await window.solace.updateDoc(id, { categoryId: target }); done++ }
+    if (!isCurrentLibrary(sessionId)) return
+    try { await window.solace.updateDoc(id, { categoryId: target }, sessionId); done++ }
     catch { /* 过期选中项（已被删除）等，跳过 */ }
   }
+  if (!isCurrentLibrary(sessionId)) return
   refresh()
   const skipped = ids.length - done
   toast(skipped > 0
@@ -708,6 +738,8 @@ $('#batchCategory').addEventListener('change', async (e) => {
 
 // 整批统一一次「是否同时删笔记」勾选（沿用单个删除的确认框语义，默认勾选）
 $('#btnBatchDel').addEventListener('click', async () => {
+  if (!data || libraryChanging) return
+  const sessionId = data.sessionId
   const ids = [...batchSelected].filter(id => data.documents.some(d => d.id === id))
   if (!ids.length) return
   const res = await askConfirm({
@@ -717,20 +749,22 @@ $('#btnBatchDel').addEventListener('click', async () => {
     okText: '删除',
     checkDefault: false // 默认保留笔记：误按回车不该丢内容
   })
-  if (!res) return
+  if (!res || !isCurrentLibrary(sessionId)) return
   let removed = 0
   const keptNotes = []
   const leftovers = new Set()
   let purged = 0
   for (const id of ids) {
+    if (!isCurrentLibrary(sessionId)) return
     try {
-      const out = await window.solace.removeDoc(id, { keepNotes: !res.checked })
+      const out = await window.solace.removeDoc(id, { keepNotes: !res.checked }, sessionId)
       removed++
       if (out.notesKeptTo) keptNotes.push(out.notesKeptTo)
       if (out.notesPurged) purged++
       for (const l of out.leftovers || []) leftovers.add(l)
     } catch { /* 过期选中项（已被删除）等，跳过 */ }
   }
+  if (!isCurrentLibrary(sessionId)) return
   batchSelected.clear()
   refresh()
   const parts = [`已删除 ${removed} 本`]
@@ -743,6 +777,8 @@ $('#btnBatchDel').addEventListener('click', async () => {
 /* ================= 事件：全局委托 ================= */
 
 document.body.addEventListener('click', async (e) => {
+  if (!data || libraryChanging) return
+  const sessionId = data.sessionId
   const el = e.target.closest('[data-action]')
   if (!el) return
   const { action, id } = el.dataset
@@ -768,7 +804,7 @@ document.body.addEventListener('click', async (e) => {
       }
       case 'pile-newcat': {
         const name = await askText('新建分类')
-        if (name) { try { await window.solace.addCategory(name); refresh() } catch (err) { toast(err.message) } }
+        if (name && isCurrentLibrary(sessionId)) { await window.solace.addCategory(name, null, sessionId); refresh() }
         break
       }
       case 'toggle-cat': {
@@ -780,7 +816,7 @@ document.body.addEventListener('click', async (e) => {
       }
       case 'add-subcat': {
         const name = await askText('新建子分类')
-        if (name) { try { await window.solace.addCategory(name, id); refresh() } catch (err) { toast(err.message) } }
+        if (name && isCurrentLibrary(sessionId)) { await window.solace.addCategory(name, id, sessionId); refresh() }
         break
       }
       case 'apply-shelf': {
@@ -792,13 +828,13 @@ document.body.addEventListener('click', async (e) => {
         const shelf = (data.smartShelves || []).find(s => s.id === id)
         if (!shelf) break
         const name = await askText('重命名收藏夹', shelf.name)
-        if (name && name !== shelf.name) { await window.solace.renameShelf(id, name); refresh() }
+        if (name && name !== shelf.name && isCurrentLibrary(sessionId)) { await window.solace.renameShelf(id, name, sessionId); refresh() }
         break
       }
       case 'del-shelf': {
         const res = await askConfirm({ title: '删除收藏夹', text: '只移除筛选组合，不影响藏书。', okText: '删除' })
-        if (res) {
-          await window.solace.removeShelf(id)
+        if (res && isCurrentLibrary(sessionId)) {
+          await window.solace.removeShelf(id, sessionId)
           refresh()
         }
         break
@@ -822,7 +858,7 @@ document.body.addEventListener('click', async (e) => {
         const cat = data.categories.find(c => c.id === id)
         if (!cat) break
         const name = await askText('重命名分类', cat.name)
-        if (name && name !== cat.name) { await window.solace.renameCategory(id, name); refresh() }
+        if (name && name !== cat.name && isCurrentLibrary(sessionId)) { await window.solace.renameCategory(id, name, sessionId); refresh() }
         break
       }
       case 'del-cat': {
@@ -831,18 +867,18 @@ document.body.addEventListener('click', async (e) => {
           text: '子分类与直属文档将上移到其父分类（顶级分类的文档变为未分类）。',
           okText: '删除'
         })
-        if (res) {
+        if (res && isCurrentLibrary(sessionId)) {
           if (filters.categoryId === id) filters.categoryId = undefined
-          await window.solace.removeCategory(id)
+          await window.solace.removeCategory(id, sessionId)
           refresh()
         }
         break
       }
       case 'del-tag': {
         const res = await askConfirm({ title: '删除标签', text: '会同时从所有文档上移除。', okText: '删除' })
-        if (res) {
+        if (res && isCurrentLibrary(sessionId)) {
           if (filters.tagId === id) filters.tagId = null
-          await window.solace.removeTag(id)
+          await window.solace.removeTag(id, sessionId)
           refresh()
         }
         break
@@ -858,7 +894,7 @@ document.body.addEventListener('click', async (e) => {
         break
       }
       case 'open-doc': {
-        await window.solace.openDoc(id)
+        await window.solace.openDoc(id, sessionId)
         refresh()
         break
       }
@@ -877,8 +913,9 @@ document.body.addEventListener('click', async (e) => {
           okText: '删除',
           checkDefault: false // 默认保留笔记：误按回车不该丢内容
         })
-        if (res) {
-          const out = await window.solace.removeDoc(id, { keepNotes: !res.checked })
+        if (res && isCurrentLibrary(sessionId)) {
+          const out = await window.solace.removeDoc(id, { keepNotes: !res.checked }, sessionId)
+          if (!isCurrentLibrary(sessionId)) return
           refresh()
           const parts = []
           if (out.notesKeptTo) parts.push(`笔记已保留在资料库 notes/${out.notesKeptTo}/`)
@@ -961,6 +998,8 @@ catList.addEventListener('dragleave', (e) => {
 })
 
 catList.addEventListener('drop', async (e) => {
+  if (!data || libraryChanging) return
+  const sessionId = data.sessionId
   const li = e.target.closest('li[data-action="filter-cat"]')
   if (!li) return
   const types = e.dataTransfer.types
@@ -974,7 +1013,8 @@ catList.addEventListener('drop', async (e) => {
     e.stopPropagation()
     catList.querySelectorAll('.drop-hint').forEach(el => el.classList.remove('drop-hint'))
     try {
-      await window.solace.moveCategory(catId, target)
+      await window.solace.moveCategory(catId, target, sessionId)
+      if (!isCurrentLibrary(sessionId)) return
       refresh()
       toast(`「${catNameOf(catId)}」已移动到「${catNameOf(target)}」下`)
     } catch (err) {
@@ -997,7 +1037,8 @@ catList.addEventListener('drop', async (e) => {
   if (doc.categoryId === categoryId) return
 
   try {
-    await window.solace.updateDoc(docId, { categoryId })
+    await window.solace.updateDoc(docId, { categoryId }, sessionId)
+    if (!isCurrentLibrary(sessionId)) return
     refresh()
     toast(`《${doc.title}》已归档到「${categoryId ? catNameOf(categoryId) : '未分类'}」`)
     burst(e.clientX, e.clientY)
@@ -1009,9 +1050,12 @@ catList.addEventListener('drop', async (e) => {
 /* ================= 事件：导入与搜索 ================= */
 
 $('#btnImport').addEventListener('click', async () => {
+  if (!data || libraryChanging) return
+  const sessionId = data.sessionId
   try {
-    const { imported, errors, duplicates } = await window.solace.importDialog()
-    imported.forEach(d => ensureQueued(d.id))
+    const { imported, errors, duplicates } = await window.solace.importDialog(sessionId)
+    if (libraryChanging || data.sessionId !== sessionId) return
+    imported.forEach(d => ensureQueued(d.id, sessionId))
     notifyImport(imported, errors, duplicates)
     refresh()
   } catch (err) {
@@ -1025,28 +1069,35 @@ $('#searchInput').addEventListener('input', (e) => {
 })
 
 $('#btnAddCat').addEventListener('click', async () => {
+  if (!data || libraryChanging) return
+  const sessionId = data.sessionId
   const name = await askText('新建分类')
-  if (name) { try { await window.solace.addCategory(name); refresh() } catch (err) { toast(err.message) } }
+  if (name && isCurrentLibrary(sessionId)) { try { await window.solace.addCategory(name, null, sessionId); refresh() } catch (err) { toast(err.message) } }
 })
 
 $('#btnAddTag').addEventListener('click', async () => {
+  if (!data || libraryChanging) return
+  const sessionId = data.sessionId
   const name = await askText('新建标签')
-  if (name) { try { await window.solace.addTag(name); refresh() } catch (err) { toast(err.message) } }
+  if (name && isCurrentLibrary(sessionId)) { try { await window.solace.addTag(name, sessionId); refresh() } catch (err) { toast(err.message) } }
 })
 
 $('#btnAddShelf').addEventListener('click', async () => {
+  if (!data || libraryChanging) return
+  const sessionId = data.sessionId
   const f = { categoryId: filters.categoryId, tagId: filters.tagId, keyword: filters.keyword }
   if (f.categoryId === undefined && !f.tagId && !f.keyword) {
     toast('先用分类/标签/搜索设一个筛选，再保存为收藏夹')
     return
   }
   const name = await askText('保存当前筛选为收藏夹', suggestedShelfName(f))
-  if (!name) return
-  try { await window.solace.saveShelf(name, f); refresh() } catch (err) { toast(err.message) }
+  if (!name || !isCurrentLibrary(sessionId)) return
+  try { await window.solace.saveShelf(name, f, sessionId); refresh() } catch (err) { toast(err.message) }
 })
 
 // 命令面板（palette.js）派发的筛选与动作
 window.addEventListener('solace-palette', async (e) => {
+  if (libraryChanging) return
   const d = e.detail || {}
   if (d.type === 'filter') {
     filters.categoryId = d.categoryId === undefined ? undefined : d.categoryId
@@ -1113,13 +1164,37 @@ window.addEventListener('solace-settings', (e) => {
   }
 })
 
-// 资料库位置切换（settings.js 派发）：所有内存态按新库重建——关闭预览
-// （旧库的书在新库不存在，翻页进度会全部写失败）、封面缓存清空、
-// 筛选复位（旧库的分类/标签 id 在新库无意义）、偏好与索引随 refresh 重载
+// Settings awaits this before sending relocation IPC, while progress still
+// belongs to the old library. Late refreshes and background jobs are invalidated.
+window.prepareLibraryChange = async () => {
+  libraryChanging = true
+  window.libraryChanging = true
+  window.dispatchEvent(new CustomEvent('solace-library-changing'))
+  refreshSeq++
+  clearTimeout(watchRefreshTimer)
+  clearTimeout(searchTimer)
+  searchTicket++
+  coverObserver.disconnect()
+  clearCoverCache()
+  resetIndex()
+  await window.closePreview?.()
+}
+
+window.addEventListener('solace-library-change-cancelled', async () => {
+  libraryChanging = false
+  window.libraryChanging = false
+  const sessionId = data?.sessionId
+  await refresh()
+  if (isCurrentLibrary(sessionId) && await refreshTextHits(filters.keyword)) renderDocList()
+})
+
 window.addEventListener('solace-library-moved', async (e) => {
   const res = e.detail || {}
-  window.closePreview?.()
+  refreshSeq++
   clearCoverCache()
+  resetIndex()
+  libraryChanging = false
+  window.libraryChanging = false
   exitBatch() // 旧库的选中 id 在新库无意义
   fromShelf = false // 新库里「从书架进入」的上下文无意义
   sessionView = null // 视图偏好随库走：下次 refresh 从新库的 settings 取
@@ -1145,6 +1220,8 @@ window.addEventListener('solace-library-moved', async (e) => {
 window.addEventListener('dragover', (e) => e.preventDefault())
 window.addEventListener('drop', async (e) => {
   e.preventDefault()
+  if (!data || libraryChanging) return
+  const sessionId = data.sessionId
   const types = [...(e.dataTransfer?.types || [])]
   if (types.includes('application/x-solace-doc')) return
   const files = [...(e.dataTransfer?.files || [])]
@@ -1156,18 +1233,21 @@ window.addEventListener('drop', async (e) => {
   const dropCatId = li && li.dataset.id !== 'all' && li.dataset.id !== 'none' ? li.dataset.id : null
   let result
   try {
-    result = await window.solace.importPaths(paths)
+    result = await window.solace.importPaths(paths, sessionId)
   } catch (err) {
     toast(`导入失败：${err.message || err}`)
     return
   }
+  if (libraryChanging || data.sessionId !== sessionId) return
   const { imported, errors, duplicates } = result
   if (dropCatId && imported.length) {
     for (const d of imported) {
-      try { await window.solace.updateDoc(d.id, { categoryId: dropCatId }) } catch { /* 归档失败不掩盖导入结果 */ }
+      if (!isCurrentLibrary(sessionId)) return
+      try { await window.solace.updateDoc(d.id, { categoryId: dropCatId }, sessionId) } catch { /* 归档失败不掩盖导入结果 */ }
     }
   }
-  imported.forEach(d => ensureQueued(d.id))
+  if (!isCurrentLibrary(sessionId)) return
+  imported.forEach(d => ensureQueued(d.id, sessionId))
   notifyImport(imported, errors, duplicates, dropCatId)
   refresh()
 })
@@ -1187,9 +1267,11 @@ function notifyImport (imported, errors, duplicates = [], dropCatId = null) {
 /* ================= 编辑对话框 ================= */
 
 let editingId = null
+let editingSession
 
 function openEditDialog (doc) {
   editingId = doc.id
+  editingSession = data.sessionId
   $('#editTitle').value = doc.title
   // 下拉按树的 DFS 顺序排列，缩进体现层级（不看折叠状态，始终全量）
   $('#editCat').innerHTML = `
@@ -1204,17 +1286,20 @@ function openEditDialog (doc) {
 }
 
 $('#btnEditSave').addEventListener('click', async () => {
+  const sessionId = editingSession
+  if (!isCurrentLibrary(sessionId)) return
   const patch = {
     title: $('#editTitle').value.trim() || '未命名文档',
     categoryId: $('#editCat').value || null,
     tagIds: [...$('#editTags').querySelectorAll('input:checked')].map(i => i.value)
   }
   try {
-    await window.solace.updateDoc(editingId, patch)
+    await window.solace.updateDoc(editingId, patch, sessionId)
   } catch (err) {
     toast(`保存失败：${err.message || err}`)
     return
   }
+  if (!isCurrentLibrary(sessionId)) return
   $('#editDialog').close()
   refresh()
 })
@@ -1350,7 +1435,7 @@ $('#btnDormant').addEventListener('click', async () => { await renderStats(); $(
 // 关闭后刷新列表：预览期间记下的阅读进度（进度环）要立刻反映到卡片上。
 // 先等进度落库完成再取数据，避免读写竞争拿到旧进度。
 async function closePreviewAndRefresh () {
-  await window.closePreview?.()
+  try { await window.closePreview?.() } catch (err) { toast(`阅读进度保存失败：${err.message || err}`) }
   refresh()
 }
 
@@ -1384,8 +1469,9 @@ window.addEventListener('keydown', (e) => {
 // 连续落盘会推送多次：刷新做 400ms 防抖合并；toast 文案由主进程聚合成批
 let watchRefreshTimer = null
 window.solace.onWatchEvent?.((ev) => {
+  if (libraryChanging || (ev.sessionId !== undefined && ev.sessionId !== data?.sessionId)) return
   if (ev.type === 'imported') {
-    ev.docs.forEach(d => ensureQueued(d.id))
+    ev.docs.forEach(d => ensureQueued(d.id, data.sessionId))
     const names = ev.docs.slice(0, 3).map(d => `《${d.title}》`).join('、')
     toast(`自动入库 ${ev.docs.length} 本：${names}${ev.docs.length > 3 ? '…' : ''}`)
     clearTimeout(watchRefreshTimer)

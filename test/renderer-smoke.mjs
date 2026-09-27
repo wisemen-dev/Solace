@@ -509,6 +509,130 @@ check('值被拒时广播的是真实存储值，而不是提交值',
   currentLib().settings.viewMode === 'spine' && settingsEvents.at(-1).viewMode === 'spine',
   settingsEvents.at(-1))
 
+/* ---------------- 资料库生命周期与跨库操作 ---------------- */
+const tick = () => new Promise(resolve => setTimeout(resolve, 0))
+const fire = async (target, type, event = {}) => {
+  for (const fn of target._listeners[type] || []) {
+    await fn({ target, preventDefault () {}, stopPropagation () {}, ...event })
+  }
+}
+const snapshot = (sessionId, title) => ({
+  ...JSON.parse(JSON.stringify(LIB)), sessionId,
+  settings: { viewMode: 'grid' },
+  documents: LIB.documents.map((d, i) => ({ ...d, sessionId, categoryId: null, title: i === 0 ? title : d.title }))
+})
+const switchLibrary = async (sessionId, title) => {
+  await win.prepareLibraryChange()
+  calls.lib = snapshot(sessionId, title)
+  await fire(win, 'solace-library-moved', { detail: { mode: 'adopted', docCount: 2 } })
+}
+await switchLibrary(1, '第一资料库')
+solace.getTextIndexStatus = async () => ({ d1: { ver: 2 }, d2: { ver: 2 } })
+await refreshFromLibrary()
+search.value = 'rust'
+search.emit('input')
+await new Promise(resolve => setTimeout(resolve, 180))
+check('切库失败回归的前置：仅正文命中可见', el('#docGrid').innerHTML.includes('无关标题'))
+const queriesBeforeCancel = calls.search.length
+await win.prepareLibraryChange()
+await fire(win, 'solace-library-change-cancelled')
+check('取消切库后重新查询全文并恢复原结果', calls.search.length > queriesBeforeCancel &&
+  el('#docGrid').innerHTML.includes('无关标题'))
+search.value = ''
+search.emit('input')
+
+const realGetLibrary = solace.getLibrary
+const oldRefresh = makeDeferred()
+const newRefresh = makeDeferred()
+let refreshRequests = 0
+solace.getLibrary = () => (++refreshRequests === 1 ? oldRefresh.p : newRefresh.p)
+const firstRefresh = fire(el('#btnPreviewClose'), 'click')
+await tick()
+const secondRefresh = fire(el('#btnPreviewClose'), 'click')
+await tick()
+newRefresh.resolve(snapshot(1, '最新刷新'))
+await tick()
+oldRefresh.resolve(snapshot(1, '过期刷新'))
+await Promise.all([firstRefresh, secondRefresh])
+await tick()
+check('后返回的旧刷新不会覆盖新刷新', el('#docGrid').innerHTML.includes('最新刷新') &&
+  !el('#docGrid').innerHTML.includes('过期刷新'))
+
+const beforeSwitch = makeDeferred()
+solace.getLibrary = () => beforeSwitch.p
+await fire(el('#btnPreviewClose'), 'click')
+await tick()
+await win.prepareLibraryChange()
+beforeSwitch.resolve(snapshot(1, '切换中旧响应'))
+await tick()
+check('准备切库后旧刷新不再渲染', !el('#docGrid').innerHTML.includes('切换中旧响应'))
+solace.getLibrary = realGetLibrary
+calls.lib = snapshot(2, '第二资料库')
+await fire(win, 'solace-library-moved', { detail: { mode: 'adopted', docCount: 2 } })
+
+await fire(el('#btnBatch'), 'click')
+await fire(el('#btnBatchAll'), 'click')
+const archiveCalls = []
+const archiveGate = makeDeferred()
+solace.updateDoc = (id, patch, sessionId) => {
+  archiveCalls.push({ id, sessionId })
+  return archiveGate.p
+}
+const archiving = fire(el('#batchCategory'), 'change', { target: { value: 'c1' } })
+await tick()
+await switchLibrary(3, '第三资料库')
+archiveGate.resolve({})
+await archiving
+check('批量归档固定原会话，切库后停止剩余操作', archiveCalls.length === 1 &&
+  archiveCalls[0].sessionId === 2 && el('#docGrid').innerHTML.includes('第三资料库'), archiveCalls)
+
+await fire(el('#btnBatch'), 'click')
+await fire(el('#btnBatchAll'), 'click')
+const removeCalls = []
+const removeGate = makeDeferred()
+solace.removeDoc = (id, opts, sessionId) => {
+  removeCalls.push({ id, sessionId })
+  return removeGate.p
+}
+const removing = fire(el('#btnBatchDel'), 'click')
+el('#confirmDialogOk').onclick()
+await tick()
+await switchLibrary(4, '第四资料库')
+removeGate.resolve({})
+await removing
+check('批量删除固定原会话，切库后不删除新库同 ID 文档', removeCalls.length === 1 &&
+  removeCalls[0].sessionId === 3, removeCalls)
+
+const singleDelete = fire(documentStub.body, 'click', {
+  target: { closest: () => ({ dataset: { action: 'del-doc', id: 'd1' } }) }
+})
+await switchLibrary(5, '第五资料库')
+el('#confirmDialogOk').onclick()
+await singleDelete
+check('旧库删除确认不能作用于新库同 ID 文档', removeCalls.length === 1, removeCalls)
+
+await fire(documentStub.body, 'click', {
+  target: { closest: () => ({ dataset: { action: 'edit-doc', id: 'd1' } }) }
+})
+await switchLibrary(6, '第六资料库')
+const updatesBeforeSave = archiveCalls.length
+await fire(el('#btnEditSave'), 'click')
+check('旧库编辑表单不能保存到新库同 ID 文档', archiveCalls.length === updatesBeforeSave)
+
+const importGate = makeDeferred()
+const dragUpdates = []
+solace.importPaths = async () => ({ imported: [{ id: 'd1' }, { id: 'd2' }], errors: [], duplicates: [] })
+solace.updateDoc = (id, patch, sessionId) => { dragUpdates.push({ id, sessionId }); return importGate.p }
+documentStub.elementFromPoint = () => ({ closest: () => ({ dataset: { id: 'c1' } }) })
+const dropping = fire(win, 'drop', { dataTransfer: { types: ['Files'], files: [{ name: 'book.pdf' }] } })
+await tick()
+await switchLibrary(7, '第七资料库')
+importGate.resolve({})
+await dropping
+check('拖入后的归档在切库时停止，旧任务不再排队', dragUpdates.length === 1 &&
+  dragUpdates[0].sessionId === 6, dragUpdates)
+check('生命周期测试没有异步未处理异常', errors.length === 0, errors)
+
 console.log('\n===SUMMARY===')
 const failed = Object.entries(results).filter(([, v]) => !v.pass).map(([k]) => k)
 console.log(failed.length ? `FAILED: ${failed.join(', ')}` : 'ALL PASS')

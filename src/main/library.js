@@ -2,6 +2,7 @@ const fs = require('fs')
 const fsp = require('fs/promises')
 const path = require('path')
 const crypto = require('crypto')
+const { assertDocumentId, containedPath, documentPath } = require('./library-paths')
 
 // 资料库数据层：全部元数据存于 library.json，PDF 副本存于 files/<id>.pdf。
 // 写入统一走 save() 的「临时文件 + 原子重命名」，避免中断损坏数据。
@@ -17,6 +18,7 @@ let legacyTextIndexFile = null // 0.15.x 的单文件索引，仅用于一次性
 let pointerFile = null
 let startupNotice = null // 指针目标不可用回退默认时的一句话说明（main 弹给用户）
 let data = null
+let sessionId = 0
 let textIndexMeta = { version: 1, entries: {} }
 let legacyMigrationDone = false // 搬迁失败过就不再重试，避免每次搜索都读一遍坏文件
 // 「移入系统回收站」的实现由 main.js 注入（shell.trashItem）。library.js 不
@@ -31,16 +33,28 @@ function init (baseDir, opts = {}) {
   pointerFile = opts.pointerFile || null
   startupNotice = null
   const defaultRoot = path.join(baseDir, 'SolaceLibrary')
-  if (pointerFile) {
-    const pointed = readPointer()
-    if (pointed) {
+  if (pointerFile && !opts.acceptDefault) {
+    let pointed
+    try {
+      pointed = readPointer()
+    } catch (err) {
+      const unavailable = new Error(`资料库位置配置 ${pointerFile} 无法读取（${err.message}）。`)
+      unavailable.code = 'LIBRARY_UNAVAILABLE'
+      unavailable.defaultRoot = defaultRoot
+      throw unavailable
+    }
+    if (pointed && !samePath(pointed, defaultRoot)) {
       try {
+        // A missing configured library must never be silently recreated.
+        fs.accessSync(path.join(pointed, 'library.json'))
         loadRoot(pointed)
         return
       } catch (err) {
-        // 指针目标不可用（移动硬盘拔了/路径被删）：回退默认位置并告知，
-        // 绝不让坏指针把应用挡在门外
-        startupNotice = `已配置的资料库位置 ${pointed} 无法使用（${err.message}）。\n已临时回退到默认位置 ${defaultRoot}。`
+        const unavailable = new Error(`已配置的资料库位置 ${pointed} 无法使用（${err.message}）。`)
+        unavailable.code = 'LIBRARY_UNAVAILABLE'
+        unavailable.rootDir = pointed
+        unavailable.defaultRoot = defaultRoot
+        throw unavailable
       }
     }
   }
@@ -52,21 +66,32 @@ function init (baseDir, opts = {}) {
     // 清扫——库已空，清扫会把 files/ 下的 PDF 副本全删掉，而它们可能是
     // 用户唯一的副本，应留给用户手动恢复或重新导入
     const bad = path.join(defaultRoot, 'library.json')
-    try { fs.renameSync(bad, bad + '.corrupt') } catch { /* 改不了名则本次启动仍会失败 */ }
+    if (err.code !== 'LIBRARY_CORRUPT') throw err
+    let backup = bad + '.corrupt'
+    let suffix = 1
+    while (fs.existsSync(backup)) backup = `${bad}.corrupt.${suffix++}`
+    fs.renameSync(bad, backup)
     // textindex.json / textindex/ 一律原地不动：docId 没变，用户从
     // library.json.corrupt 里抢救回条目后索引还能直接复用，没有理由先毁掉它
-    startupNotice = `资料库数据文件损坏，已新建空资料库：\n${defaultRoot}\n原文件保留为 library.json.corrupt，库内 PDF 副本与全文索引未删除，可手动取回或重新导入。`
+    startupNotice = `资料库数据文件损坏，已新建空资料库：\n${defaultRoot}\n原文件保留为 ${path.basename(backup)}，库内 PDF 副本与全文索引未删除，可手动取回或重新导入。`
     loadRoot(defaultRoot, { sweep: false })
   }
+  if (opts.acceptDefault) writePointer(defaultRoot)
 }
 
 function readPointer () {
+  let raw
   try {
-    const obj = JSON.parse(fs.readFileSync(pointerFile, 'utf8'))
-    return typeof obj.rootDir === 'string' && obj.rootDir.trim() ? obj.rootDir.trim() : null
-  } catch {
-    return null
+    raw = fs.readFileSync(pointerFile, 'utf8')
+  } catch (err) {
+    if (err.code === 'ENOENT') return null
+    throw err
   }
+  const obj = JSON.parse(raw)
+  if (!obj || typeof obj.rootDir !== 'string' || !obj.rootDir.trim() || !path.isAbsolute(obj.rootDir.trim())) {
+    throw new Error('资料库位置配置无效')
+  }
+  return obj.rootDir.trim()
 }
 
 function writePointer (p) {
@@ -80,6 +105,19 @@ function writePointer (p) {
 // 指向某目录并（重新）加载它：init 启动加载与 relocate 切换共用。
 // opts.sweep=false 跳过孤儿清扫（损坏重建时用，保留无主 PDF 副本供恢复）
 function loadRoot (root, opts = {}) {
+  let loaded = null
+  const file = containedPath(root, 'library.json')
+  if (fs.existsSync(file)) {
+    const raw = fs.readFileSync(file, 'utf8')
+    try {
+      loaded = JSON.parse(raw)
+      assertLibraryShape(loaded)
+    } catch (err) {
+      err.code = 'LIBRARY_CORRUPT'
+      throw err
+    }
+  }
+  for (const sub of ['files', 'covers', 'textindex', 'notes']) containedPath(root, sub)
   rootDir = root
   dataFile = path.join(rootDir, 'library.json')
   textIndexDir = path.join(rootDir, 'textindex')
@@ -88,9 +126,8 @@ function loadRoot (root, opts = {}) {
   fs.mkdirSync(path.join(rootDir, 'files'), { recursive: true })
   fs.mkdirSync(path.join(rootDir, 'covers'), { recursive: true })
   fs.mkdirSync(textIndexDir, { recursive: true })
-  if (fs.existsSync(dataFile)) {
-    data = JSON.parse(fs.readFileSync(dataFile, 'utf8'))
-    assertLibraryShape()
+  if (loaded) {
+    data = loaded
   } else {
     data = {
       version: 1,
@@ -121,6 +158,7 @@ function loadRoot (root, opts = {}) {
   if (opts.sweep !== false) pruneTextIndexMeta()
   // 删除书籍时被占用没删掉的文件，启动时的孤儿清理补删
   if (opts.sweep !== false) sweepOrphans()
+  sessionId++
 }
 
 function getData () {
@@ -129,7 +167,9 @@ function getData () {
 
 // 临时文件 + 原子重命名：写入中断也不会留下半个坏文件
 function atomicWriteFile (file, text) {
+  containedPath(rootDir, path.relative(rootDir, file))
   const tmp = file + '.tmp'
+  containedPath(rootDir, path.relative(rootDir, tmp))
   fs.writeFileSync(tmp, text, 'utf8')
   fs.renameSync(tmp, file)
 }
@@ -155,6 +195,13 @@ function assertLibraryShape (obj = data) {
   for (const key of ['documents', 'categories', 'tags']) {
     if (!Array.isArray(obj[key])) throw new Error(`缺少 ${key} 集合`)
   }
+  const ids = new Set()
+  for (const doc of obj.documents) {
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new Error('非法文档条目')
+    const id = assertDocumentId(doc.id).toLowerCase()
+    if (ids.has(id)) throw new Error('文档标识重复')
+    ids.add(id)
+  }
 }
 
 // 文档字段归一化：数据层的读写两侧都假定这些字段存在（renderTags 直接
@@ -173,6 +220,7 @@ function normalizeDocuments () {
 }
 
 function findDoc (id) {
+  assertDocumentId(id)
   const doc = data.documents.find(d => d.id === id)
   if (!doc) throw new Error(`文档不存在: ${id}`)
   return doc
@@ -191,7 +239,7 @@ async function sha256OfFile (filePath) {
 // 内容级去重：字节相同的 PDF 不重复入库（重复条目会让分类、足迹、笔记全部分裂）。
 // 新条目都带 hash 直接比对；旧库条目没有 hash，只对同大小的文件现算一次并回填
 // （大小不同的直接排除），之后就走 hash 快路径。副本已丢失的旧条目无法比对，放行导入。
-async function findDuplicate (hash, size) {
+async function findDuplicate (hash, size, check) {
   let backfilled = false
   let dup = null
   for (const d of data.documents) {
@@ -201,59 +249,109 @@ async function findDuplicate (hash, size) {
     }
     if (d.size !== size) continue
     try {
-      d.hash = await sha256OfFile(getDocPath(d.id))
+      const existingHash = await sha256OfFile(getDocPath(d.id))
+      check()
+      d.hash = existingHash
       backfilled = true
       if (d.hash === hash) dup = d
-    } catch { /* 副本丢失的旧条目跳过 */ }
+    } catch { check() /* 副本丢失的旧条目跳过 */ }
     if (dup) break
   }
   if (backfilled) save()
   return dup
 }
 
-// 导入串行化：入库流程是「算哈希 → 查重 → 复制副本 → 写数据」，中间有多个
-// await，本身不是原子的。同一文件被两条链路同时导入（快速拖入两次、
-// 自动入库与手动导入撞车、启动补扫与稳定判定定时器撞车）时会双双通过查重，
-// 落成两条内容相同的条目——正是内容去重要防的分裂（分类/足迹/笔记各记一份，
-// 且此后该文件永远被判重复）。用一条 promise 链把导入排成队，队列内不并发；
-// 单次失败不打断队列，错误仍原样抛给本次调用方
-let importChain = Promise.resolve()
+// Imports, async deletion and relocation share a queue. Requests keep their
+// original library session even while waiting behind another operation.
+let mutationChain = Promise.resolve()
 
-function importPdf (filePath) {
-  const run = importChain.then(() => importPdfLocked(filePath))
-  importChain = run.then(() => {}, () => {})
+function enqueueMutation (fn) {
+  const run = mutationChain.then(fn)
+  mutationChain = run.then(() => {}, () => {})
   return run
 }
 
-async function importPdfLocked (filePath) {
-  const stat = await fsp.stat(filePath)
-  if (!stat.isFile()) throw new Error('不是常规文件')
-  if (path.extname(filePath).toLowerCase() !== '.pdf') throw new Error('仅支持 PDF 文件')
-  const hash = await sha256OfFile(filePath)
-  const dup = await findDuplicate(hash, stat.size)
-  if (dup) {
-    const err = new Error(`与已入库的《${dup.title}》内容相同`)
-    err.duplicate = { title: dup.title, docId: dup.id }
+function assertSession (expected = sessionId) {
+  if (expected !== sessionId) {
+    const err = new Error('资料库已切换，请重新执行操作')
+    err.name = 'AbortError'
     throw err
   }
-  const id = crypto.randomUUID()
-  await fsp.copyFile(filePath, path.join(rootDir, 'files', `${id}.pdf`))
-  const doc = {
-    id,
-    title: stemOf(path.basename(filePath)),
-    fileName: path.basename(filePath),
-    originalPath: filePath,
-    size: stat.size,
-    hash,
-    addedAt: new Date().toISOString(),
-    openedAt: null,
-    openCount: 0,
-    categoryId: null,
-    tagIds: []
+}
+
+function runMutation (expectedSession = sessionId, action) {
+  assertSession(expectedSession)
+  return enqueueMutation(() => {
+    assertSession(expectedSession)
+    return action()
+  })
+}
+
+function importPdf (filePath, opts = {}) {
+  const expected = opts.sessionId ?? sessionId
+  const check = () => {
+    assertSession(expected)
+    if (opts.signal?.aborted) {
+      const err = new Error('导入已取消')
+      err.name = 'AbortError'
+      throw err
+    }
   }
-  data.documents.push(doc)
-  save()
-  return doc
+  return enqueueMutation(() => importPdfLocked(filePath, check))
+}
+
+async function importPdfLocked (filePath, check) {
+  check()
+  const stat = await fsp.stat(filePath)
+  check()
+  if (!stat.isFile()) throw new Error('不是常规文件')
+  if (path.extname(filePath).toLowerCase() !== '.pdf') throw new Error('仅支持 PDF 文件')
+  const id = crypto.randomUUID()
+  const target = documentPath(rootDir, 'files', id, '.pdf')
+  const temporary = containedPath(rootDir, 'files', `${id}.pdf.tmp`)
+  let committed = false
+  try {
+    await fsp.copyFile(filePath, temporary, fs.constants.COPYFILE_EXCL)
+    check()
+    const hash = await sha256OfFile(temporary)
+    check()
+    const copied = await fsp.stat(temporary)
+    check()
+    const dup = await findDuplicate(hash, copied.size, check)
+    check()
+    if (dup) {
+      const err = new Error(`与已入库的《${dup.title}》内容相同`)
+      err.duplicate = { title: dup.title, docId: dup.id }
+      throw err
+    }
+    await fsp.rename(temporary, target)
+    check()
+    const doc = {
+      id,
+      title: stemOf(path.basename(filePath)),
+      fileName: path.basename(filePath),
+      originalPath: filePath,
+      size: copied.size,
+      hash,
+      addedAt: new Date().toISOString(),
+      openedAt: null,
+      openCount: 0,
+      categoryId: null,
+      tagIds: []
+    }
+    data.documents.push(doc)
+    try { save() } catch (err) {
+      data.documents = data.documents.filter(d => d !== doc)
+      throw err
+    }
+    committed = true
+    return doc
+  } finally {
+    if (!committed) {
+      await fsp.rm(temporary, { force: true }).catch(() => {})
+      await fsp.rm(target, { force: true }).catch(() => {})
+    }
+  }
 }
 
 // patch 只允许改这三个字段，其余字段由系统维护。
@@ -285,8 +383,20 @@ function updateDoc (id, patch) {
 // 默认删除笔记时走系统回收站（与确认框文案「移入系统回收站」一致，也与笔记
 // 面板里的单条删除同语义）；回收站不可用时才回退永久删除，并在返回值里以
 // notesPurged 如实标注，由界面提示用户
-async function removeDoc (id, opts = {}) {
+function removeDoc (id, opts = {}) {
+  const expected = opts.sessionId ?? sessionId
+  return enqueueMutation(() => {
+    assertSession(expected)
+    return removeDocLocked(id, opts)
+  })
+}
+
+async function removeDocLocked (id, opts) {
   const doc = findDoc(id)
+  const pdfFile = documentPath(rootDir, 'files', doc.id, '.pdf')
+  const coverFile = documentPath(rootDir, 'covers', doc.id, '.jpg')
+  const indexFile = shardFile(doc.id)
+  const notesDir = documentPath(rootDir, 'notes', doc.id)
   data.documents = data.documents.filter(d => d.id !== id)
   if (textIndexMeta.entries[id]) {
     delete textIndexMeta.entries[id]
@@ -298,12 +408,11 @@ async function removeDoc (id, opts = {}) {
   const tryRm = (target, o) => {
     try { fs.rmSync(target, o) } catch { leftovers.push(path.basename(target)) }
   }
-  tryRm(path.join(rootDir, 'files', `${doc.id}.pdf`), { force: true })
-  tryRm(path.join(rootDir, 'covers', `${doc.id}.jpg`), { force: true })
-  tryRm(shardFile(doc.id), { force: true })
+  tryRm(pdfFile, { force: true })
+  tryRm(coverFile, { force: true })
+  tryRm(indexFile, { force: true })
   let notesKeptTo = null
   let notesPurged = false
-  const notesDir = path.join(rootDir, 'notes', doc.id)
   if (opts.keepNotes && fs.existsSync(notesDir)) {
     // Windows 目录名不能含 \/:*?"<>| 也不能以点号/空格结尾，逐一清洗
     const safe = String(doc.title || '')
@@ -313,9 +422,9 @@ async function removeDoc (id, opts = {}) {
     const p = n => String(n).padStart(2, '0')
     const t = new Date()
     const stamp = `${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}-${p(t.getHours())}${p(t.getMinutes())}${p(t.getSeconds())}`
-    let dest = path.join(rootDir, 'notes', `已删书-${safe}-${stamp}`)
+    let dest = containedPath(rootDir, 'notes', `已删书-${safe}-${stamp}`)
     let n = 2
-    while (fs.existsSync(dest)) dest = path.join(rootDir, 'notes', `已删书-${safe}-${stamp} (${n++})`)
+    while (fs.existsSync(dest)) dest = containedPath(rootDir, 'notes', `已删书-${safe}-${stamp} (${n++})`)
     try {
       fs.renameSync(notesDir, dest)
       notesKeptTo = path.basename(dest)
@@ -368,14 +477,14 @@ function sweepOrphans () {
   }
 
   if (!data.documents.length) return
-  const ids = new Set(data.documents.map(d => d.id))
+  const ids = new Set(data.documents.map(d => d.id.toLowerCase()))
   for (const sub of ['files', 'covers']) {
     let entries
     try { entries = fs.readdirSync(path.join(rootDir, sub)) } catch { continue }
     for (const name of entries) {
       const m = APP_FILE_RE.exec(name)
-      if (!m || ids.has(m[1])) continue
-      tryRm(path.join(rootDir, sub, name))
+      if (!m || ids.has(m[1].toLowerCase())) continue
+      tryRm(containedPath(rootDir, sub, name))
     }
   }
 }
@@ -418,6 +527,29 @@ function inspectTarget (dir) {
 //   失败指针都不动，当前资料库原样完好
 // - 非 move：目标已有资料库则「采用」（当前库原样保留）；否则建空库
 function relocate (dir, opts = {}) {
+  const expected = opts.sessionId ?? sessionId
+  return enqueueMutation(() => {
+    assertSession(expected)
+    return relocateLocked(dir, opts)
+  })
+}
+
+function switchRoot (target) {
+  const previous = { rootDir, dataFile, textIndexDir, textIndexMetaFile, legacyTextIndexFile,
+    data, textIndexMeta, legacyMigrationDone, sessionId }
+  try {
+    loadRoot(target)
+    writePointer(target)
+  } catch (err) {
+    ;({ rootDir, dataFile, textIndexDir, textIndexMetaFile, legacyTextIndexFile,
+      data, textIndexMeta, legacyMigrationDone, sessionId } = previous)
+    shardCache.clear()
+    shardCacheChars = 0
+    throw err
+  }
+}
+
+function relocateLocked (dir, opts) {
   if (!pointerFile) throw new Error('资料库位置已由 SOLACE_DATA_DIR 环境变量固定，无法更改')
   const target = targetRootOf(dir)
   if (samePath(target, rootDir)) throw new Error('目标位置就是当前资料库位置')
@@ -438,12 +570,51 @@ function relocate (dir, opts = {}) {
     }
     const oldRoot = rootDir
     fs.mkdirSync(path.dirname(target), { recursive: true })
-    fs.cpSync(oldRoot, target, { recursive: true }) // 失败即抛出，指针不动
-    writePointer(target)
+    const staging = fs.mkdtempSync(path.join(path.dirname(target), '.solace-move-'))
+    const copiedRoot = path.join(staging, 'payload')
+    const emptyTarget = path.join(staging, 'original-empty-target')
+    let targetSaved = false
+    let published = false
+    let committed = false
+    try {
+      fs.cpSync(oldRoot, copiedRoot, { recursive: true })
+      // Publish only the completed copy. Preserve a pre-existing empty target
+      // so a failed pointer commit can restore exactly the original directory.
+      if (fs.existsSync(target)) {
+        if (fs.readdirSync(target).length) throw new Error('目标位置已有文件，为避免覆盖请选择空文件夹')
+        fs.renameSync(target, emptyTarget)
+        targetSaved = true
+      }
+      fs.renameSync(copiedRoot, target)
+      published = true
+      switchRoot(target)
+      committed = true
+    } catch (err) {
+      try {
+        if (published) {
+          fs.renameSync(target, copiedRoot)
+          published = false
+        }
+        if (targetSaved) {
+          fs.renameSync(emptyTarget, target)
+          targetSaved = false
+        }
+      } catch (rollbackError) {
+        err.message += `；恢复目标位置失败，临时目录保留在 ${staging}（${rollbackError.message}）`
+      }
+      throw err
+    } finally {
+      if (!published) {
+        try { fs.rmSync(copiedRoot, { recursive: true, force: true }) } catch { /* incomplete copy stays outside the target */ }
+      }
+      if (committed && targetSaved) {
+        try { fs.rmdirSync(emptyTarget) } catch { /* never recursively delete a pre-existing directory */ }
+      }
+      try { fs.rmdirSync(staging) } catch { /* retain files if rollback or cleanup was blocked */ }
+    }
     let oldRemoved = true
     try { fs.rmSync(oldRoot, { recursive: true, force: true }) } catch { /* 旧目录文件被占用 */ }
     if (fs.existsSync(oldRoot)) oldRemoved = false
-    loadRoot(target)
     return { rootDir: target, mode: 'moved', oldLocation: oldRoot, oldRemoved, docCount: data.documents.length }
   }
 
@@ -452,8 +623,7 @@ function relocate (dir, opts = {}) {
     // 预校验目标库可解析且结构完整：坏库直接报错，指针不动
     // （否则坏库会让指针先切过去，下次启动才发现并回退默认位置）
     assertLibraryShape(JSON.parse(fs.readFileSync(libFile, 'utf8')))
-    writePointer(target)
-    loadRoot(target)
+    switchRoot(target)
     return { rootDir: target, mode: 'adopted', docCount: data.documents.length }
   }
   // 新建空库：先建目录并探写，确认可写后才切指针
@@ -462,24 +632,26 @@ function relocate (dir, opts = {}) {
   const probe = path.join(target, '.solace-probe')
   fs.writeFileSync(probe, '')
   fs.rmSync(probe)
-  writePointer(target)
-  loadRoot(target)
+  switchRoot(target)
   return { rootDir: target, mode: 'created', docCount: data.documents.length }
 }
 
 function getDocPath (id) {
-  return path.join(rootDir, 'files', `${findDoc(id).id}.pdf`)
+  return documentPath(rootDir, 'files', findDoc(id).id, '.pdf')
 }
 
 // 异步读：readFileSync 会把主进程连同全部 IPC 一起卡住（预览 / 封面 / 全文
 // 索引三条路径都走这里，大 PDF 上就是整个窗口失去响应）
-async function readFileBuffer (id) {
+async function readFileBuffer (id, expected = sessionId) {
+  assertSession(expected)
   const p = getDocPath(id)
   // 副本可能已被手动清理：给出可读错误，而不是让调用方拿到 ENOENT 猜原因
   try {
     // 直接返回 Buffer，由 Electron IPC 结构化克隆为渲染进程的 Uint8Array。
     // 不能返回 buffer.buffer（ArrayBuffer），Node 缓冲池会使其大于实际文件长度
-    return await fsp.readFile(p)
+    const buffer = await fsp.readFile(p)
+    assertSession(expected)
+    return buffer
   } catch (err) {
     if (err && err.code === 'ENOENT') {
       throw new Error('库内 PDF 副本已丢失，请删除这本书后重新导入（原文件不受影响）')
@@ -611,7 +783,7 @@ function dropShardCache (id) {
 }
 
 function shardFile (id) {
-  return path.join(textIndexDir, `${id}.json`)
+  return documentPath(rootDir, 'textindex', id, '.json')
 }
 
 // 分片正文体积大，用紧凑 JSON（library.json 保持两空格缩进供人工查看）
@@ -670,6 +842,7 @@ function migrateLegacyTextIndex () {
   try {
     const old = JSON.parse(fs.readFileSync(legacyTextIndexFile, 'utf8'))
     for (const [id, e] of Object.entries(old || {})) {
+      try { assertDocumentId(id) } catch { continue }
       if (!e || !Array.isArray(e.pages)) continue
       writeShard(id, e)
       textIndexMeta.entries[id] = { ver: Number(e.ver) || undefined, failed: !!e.failed, at: e.at }
@@ -693,15 +866,18 @@ function getTextIndexStatus () {
   return out
 }
 
-async function readShardPages (id) {
+async function readShardPages (id, expected) {
+  assertSession(expected)
   const cached = shardCache.get(id)
   if (cached) return cached.pages
   let raw
   try {
     raw = await fsp.readFile(shardFile(id), 'utf8')
   } catch {
+    assertSession(expected)
     return null
   }
+  assertSession(expected)
   let obj
   try {
     obj = JSON.parse(raw)
@@ -715,7 +891,8 @@ async function readShardPages (id) {
 
 // 全文搜索：只回传 { docId: 首个命中页码 }。逐本 await 读取（不阻塞主进程
 // 事件循环），并周期性让出，避免大库搜索时窗口消息被卡住
-async function searchTextIndex (kw) {
+async function searchTextIndex (kw, expected = sessionId) {
+  assertSession(expected)
   const needle = normalizeKeyword(kw)
   if (!needle) return {}
   migrateLegacyTextIndex()
@@ -724,7 +901,8 @@ async function searchTextIndex (kw) {
   const ids = Object.keys(textIndexMeta.entries).filter(id => live.has(id) && !textIndexMeta.entries[id].failed)
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i]
-    const pages = await readShardPages(id)
+    const pages = await readShardPages(id, expected)
+    assertSession(expected)
     if (pages) {
       for (let n = 0; n < pages.length; n++) {
         if (pages[n].includes(needle)) { hits[id] = n + 1; break }
@@ -735,6 +913,7 @@ async function searchTextIndex (kw) {
       saveTextIndexMeta()
     }
     if ((i & 15) === 15) await new Promise(r => setImmediate(r))
+    assertSession(expected)
   }
   return hits
 }
@@ -763,7 +942,7 @@ function setCover (id, dataUrl) {
   findDoc(id)
   const m = /^data:image\/(png|jpeg);base64,(.+)$/.exec(String(dataUrl || ''))
   if (!m) throw new Error('无效的封面数据')
-  fs.writeFileSync(path.join(rootDir, 'covers', `${id}.jpg`), Buffer.from(m[2], 'base64'))
+  fs.writeFileSync(documentPath(rootDir, 'covers', id, '.jpg'), Buffer.from(m[2], 'base64'))
   findDoc(id).hasCover = true
   save()
   return true
@@ -771,7 +950,7 @@ function setCover (id, dataUrl) {
 
 function getCoverDataUrl (id) {
   findDoc(id)
-  const file = path.join(rootDir, 'covers', `${id}.jpg`)
+  const file = documentPath(rootDir, 'covers', id, '.jpg')
   if (!fs.existsSync(file)) return null
   return `data:image/jpeg;base64,${fs.readFileSync(file).toString('base64')}`
 }
@@ -944,6 +1123,9 @@ function getStartupNotice () {
 
 module.exports = {
   init,
+  assertSession,
+  runMutation,
+  getSessionId: () => sessionId,
   setTrashHandler,
   getData,
   getRootDir,

@@ -20,15 +20,21 @@ const DORMANT_CHOICES = [15, 30, 60, 90]
 const INDEX_LIMITS = [300, 800, 1500, 3000, 5000]
 
 let lastDocCount = 0
+let panelSession
+let panelSeq = 0
+let relocating = false
 
 // 控件值全部来自实际存储，打开面板与切库后重填共用
 async function fillPanel () {
+  const ticket = ++panelSeq
   let data
   try {
     data = await window.solace.getLibrary()
   } catch {
     return
   }
+  if (ticket !== panelSeq) return
+  panelSession = data.sessionId
   lastDocCount = data.documents.length
   const s = data.settings || {}
   $('#setTheme').value = THEMES.includes(s.theme) ? s.theme : 'auto'
@@ -51,12 +57,15 @@ async function fillPanel () {
     ).join('')
   try {
     const info = await window.solace.getLibraryInfo()
+    if (ticket !== panelSeq) return
     $('#setRootPath').textContent = info.rootDir
     // 位置被 SOLACE_DATA_DIR 固定（开发/测试）：禁用更改，避免「改了但重启不生效」
     const btn = $('#btnRelocate')
-    btn.disabled = !info.canRelocate
+    btn.disabled = relocating || !info.canRelocate
     btn.title = info.canRelocate ? '' : '资料库位置已由 SOLACE_DATA_DIR 环境变量固定（开发模式）'
+    return info.canRelocate
   } catch {
+    if (ticket !== panelSeq) return
     $('#setRootPath').textContent = '（不可用）'
   }
 }
@@ -81,13 +90,15 @@ async function openSettings () {
 // 写回并广播；应用侧监听后联动界面。失败静默（下次打开面板会读到真实值）
 // 广播的是「实际落库的值」而不是「提交的值」：白名单会拒绝非法值（枚举/下界），
 // 按提交值广播会让界面显示一个其实没存进去的偏好
-async function save (patch) {
+async function save (patch, sessionId = panelSession) {
+  if (relocating || sessionId !== panelSession) return
   let stored
   try {
-    stored = await window.solace.updateSettings(patch)
+    stored = await window.solace.updateSettings(patch, sessionId)
   } catch {
     return
   }
+  if (relocating || sessionId !== panelSession) return
   const applied = {}
   for (const key of Object.keys(patch)) {
     if (stored && key in stored) applied[key] = stored[key]
@@ -108,28 +119,57 @@ $('#setIndexLimit').addEventListener('change', (e) => save({ indexPageLimit: Num
 $('#setPdfReader').addEventListener('change', (e) => save({ pdfReaderPath: e.target.value.trim() }))
 $('#setNotesEditor').addEventListener('change', (e) => save({ notesEditorPath: e.target.value.trim() }))
 $('#btnBrowsePdfReader').addEventListener('click', async () => {
-  const p = await window.solace.pickFile({ title: '选择 PDF 阅读器程序' })
-  if (p) { $('#setPdfReader').value = p; save({ pdfReaderPath: p }) }
+  if (relocating) return
+  const sessionId = panelSession
+  try {
+    const p = await window.solace.pickFile({ title: '选择 PDF 阅读器程序' })
+    if (!p || relocating || sessionId !== panelSession) return
+    $('#setPdfReader').value = p
+    await save({ pdfReaderPath: p }, sessionId)
+  } catch (err) {
+    if (!relocating && sessionId === panelSession) window.toast?.(`选择失败：${err.message || err}`)
+  }
 })
 $('#btnBrowseNotesEditor').addEventListener('click', async () => {
-  const p = await window.solace.pickFile({ title: '选择笔记编辑器程序' })
-  if (p) { $('#setNotesEditor').value = p; save({ notesEditorPath: p }) }
+  if (relocating) return
+  const sessionId = panelSession
+  try {
+    const p = await window.solace.pickFile({ title: '选择笔记编辑器程序' })
+    if (!p || relocating || sessionId !== panelSession) return
+    $('#setNotesEditor').value = p
+    await save({ notesEditorPath: p }, sessionId)
+  } catch (err) {
+    if (!relocating && sessionId === panelSession) window.toast?.(`选择失败：${err.message || err}`)
+  }
 })
 $('#setTool').addEventListener('change', (e) => save({ externalToolPath: e.target.value.trim() }))
 $('#btnBrowseTool').addEventListener('click', async () => {
-  const p = await window.solace.pickFile({ title: '选择外部工具程序' })
-  if (p) { $('#setTool').value = p; save({ externalToolPath: p }) }
+  if (relocating) return
+  const sessionId = panelSession
+  try {
+    const p = await window.solace.pickFile({ title: '选择外部工具程序' })
+    if (!p || relocating || sessionId !== panelSession) return
+    $('#setTool').value = p
+    await save({ externalToolPath: p }, sessionId)
+  } catch (err) {
+    if (!relocating && sessionId === panelSession) window.toast?.(`选择失败：${err.message || err}`)
+  }
 })
 
 /* ---- 自动入库（监视文件夹） ---- */
 
 $('#setWatchFolder').addEventListener('change', (e) => save({ watchFolder: e.target.value.trim() }))
 $('#btnBrowseWatch').addEventListener('click', async () => {
-  const p = await window.solace.pickDirectory({ title: '选择自动入库监视文件夹' })
-  if (p) {
+  if (relocating) return
+  const sessionId = panelSession
+  try {
+    const p = await window.solace.pickDirectory({ title: '选择自动入库监视文件夹' })
+    if (!p || relocating || sessionId !== panelSession) return
     $('#setWatchFolder').value = p
     $('#setWatchEnabled').checked = true // 选了文件夹即视为想启用
-    save({ watchFolder: p, watchEnabled: true })
+    await save({ watchFolder: p, watchEnabled: true }, sessionId)
+  } catch (err) {
+    if (!relocating && sessionId === panelSession) window.toast?.(`选择失败：${err.message || err}`)
   }
 })
 $('#setWatchEnabled').addEventListener('change', (e) => save({ watchEnabled: e.target.checked }))
@@ -142,53 +182,68 @@ $('#btnOpenRoot').addEventListener('click', async () => {
 /* ---- 更改资料库位置 ---- */
 
 $('#btnRelocate').addEventListener('click', async () => {
-  const dir = await window.solace.pickDirectory({ title: '选择新的资料库位置' })
-  if (!dir) return
-
-  let info
+  if (relocating) return
+  relocating = true
+  const sessionId = panelSession
+  const button = $('#btnRelocate')
+  button.disabled = true
+  let prepared = false
   try {
-    info = await window.solace.inspectTarget(dir)
+    const dir = await window.solace.pickDirectory({ title: '选择新的资料库位置' })
+    if (!dir || sessionId !== panelSession) return
+
+    let info
+    try {
+      info = await window.solace.inspectTarget(dir)
+    } catch (err) {
+      if (sessionId === panelSession) window.toast?.(`无法使用该位置：${err.message || err}`)
+      return
+    }
+    if (sessionId !== panelSession) return
+    if (info.sameAsCurrent) {
+      window.toast?.('所选位置就是当前资料库位置')
+      return
+    }
+    if (info.insideCurrent) {
+      window.toast?.('所选位置在当前资料库内部，请选择资料库以外的文件夹')
+      return
+    }
+
+    // 按目标状态呈现对应选项：已有库 → 只能「使用」（移动会覆盖）；空 → 移动或新建
+    const choice = info.hasLibrary
+      ? await askChoice({
+        title: '切换资料库',
+        text: `所选位置已有资料库（${info.docCount} 本书）。切换后使用那里的资料库；当前资料库原样保留在原处。`,
+        choices: [{ label: `使用该资料库（${info.docCount} 本）`, value: 'adopt', primary: true }]
+      })
+      : await askChoice({
+        title: '更改资料库位置',
+        text: `要把当前资料库（${lastDocCount} 本）整体移动到 ${info.targetRoot}，还是在所选位置新建一个空资料库？`,
+        choices: [
+          { label: '移动当前资料库', value: 'move', primary: true },
+          { label: '新建空资料库', value: 'new' }
+        ]
+      })
+    if (!choice || sessionId !== panelSession) return
+
+    prepared = true
+    await window.prepareLibraryChange?.()
+    if (sessionId !== panelSession) return
+    const res = await window.solace.relocateLibrary(dir, { move: choice === 'move', sessionId })
+    prepared = false
+    window.dispatchEvent(new CustomEvent('solace-library-moved', { detail: res }))
   } catch (err) {
-    window.toast?.(`无法使用该位置：${err.message || err}`)
-    return
+    if (sessionId === panelSession) window.toast?.(`更改失败：${err.message || err}`)
+  } finally {
+    if (prepared) window.dispatchEvent(new CustomEvent('solace-library-change-cancelled'))
+    let canRelocate = false
+    try {
+      canRelocate = await fillPanel()
+    } finally {
+      relocating = false
+      button.disabled = !canRelocate
+    }
   }
-  if (info.sameAsCurrent) {
-    window.toast?.('所选位置就是当前资料库位置')
-    return
-  }
-  if (info.insideCurrent) {
-    window.toast?.('所选位置在当前资料库内部，请选择资料库以外的文件夹')
-    return
-  }
-
-  // 按目标状态呈现对应选项：已有库 → 只能「使用」（移动会覆盖）；空 → 移动或新建
-  const choice = info.hasLibrary
-    ? await askChoice({
-      title: '切换资料库',
-      text: `所选位置已有资料库（${info.docCount} 本书）。切换后使用那里的资料库；当前资料库原样保留在原处。`,
-      choices: [{ label: `使用该资料库（${info.docCount} 本）`, value: 'adopt', primary: true }]
-    })
-    : await askChoice({
-      title: '更改资料库位置',
-      text: `要把当前资料库（${lastDocCount} 本）整体移动到 ${info.targetRoot}，还是在所选位置新建一个空资料库？`,
-      choices: [
-        { label: '移动当前资料库', value: 'move', primary: true },
-        { label: '新建空资料库', value: 'new' }
-      ]
-    })
-  if (!choice) return
-
-  let res
-  try {
-    res = await window.solace.relocateLibrary(dir, { move: choice === 'move' })
-  } catch (err) {
-    window.toast?.(`更改失败：${err.message || err}（当前资料库未受影响）`)
-    return
-  }
-
-  // 面板立即反映新库（设置随库走：切库后面板各控件的值也换成新库的）
-  await fillPanel()
-  window.dispatchEvent(new CustomEvent('solace-library-moved', { detail: res }))
 })
 
 document.getElementById('btnSettings').addEventListener('click', openSettings)

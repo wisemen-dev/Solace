@@ -24,15 +24,35 @@ const ACTIONS = [
 let lastData = null
 let items = []
 let activeIdx = 0
+let openTicket = 0
+let queryTimer = null
+let queryTicket = 0
+
+function invalidatePalette () {
+  openTicket++
+  queryTicket++
+  clearTimeout(queryTimer)
+  queryTimer = null
+  searchTextIndex('', lastData?.sessionId)
+  lastData = null
+  items = []
+  list.innerHTML = ''
+}
 
 async function openPalette () {
+  if (window.libraryChanging || dlg.open) return
+  const ticket = ++openTicket
+  let snapshot
   try {
-    lastData = await window.solace.getLibrary()
+    snapshot = await window.solace.getLibrary()
   } catch {
     return
   }
+  if (ticket !== openTicket || window.libraryChanging) return
+  lastData = snapshot
   input.value = ''
-  await searchTextIndex('') // 全文命中表随面板打开重置（正文在主进程，按需查）
+  await searchTextIndex('', snapshot.sessionId) // 全文命中表随面板打开重置（正文在主进程，按需查）
+  if (ticket !== openTicket || window.libraryChanging) return
   rebuild('')
   dlg.showModal()
   input.focus()
@@ -106,7 +126,7 @@ function updateActive (delta) {
 }
 
 function execute (item) {
-  if (!item) return
+  if (!item || !dlg.open || window.libraryChanging) return
   dlg.close()
   if (item.kind === 'book') {
     openPreview(item.payload.doc, item.payload.hitPage)
@@ -117,18 +137,21 @@ function execute (item) {
 
 // 全文命中要问主进程（索引正文不在渲染层），所以输入先出标题/文件名结果，
 // 防抖后补一次带全文命中的结果；ticket 防止过期结果覆盖新结果
-let queryTimer = null
-let queryTicket = 0
-
 input.addEventListener('input', () => {
+  if (!dlg.open || !lastData || window.libraryChanging) return
   const kw = input.value
+  const sessionId = lastData.sessionId
+  const opening = openTicket
   clearTimeout(queryTimer)
+  queryTimer = null
   const ticket = ++queryTicket
   rebuild(kw)
-  if (!normText(kw)) return
+  if (!normText(kw)) { searchTextIndex('', sessionId); return }
   queryTimer = setTimeout(async () => {
-    await searchTextIndex(kw)
-    if (ticket !== queryTicket) return
+    queryTimer = null
+    if (ticket !== queryTicket || opening !== openTicket || !dlg.open || window.libraryChanging) return
+    await searchTextIndex(kw, sessionId)
+    if (ticket !== queryTicket || opening !== openTicket || !dlg.open || window.libraryChanging) return
     rebuild(kw)
   }, 120)
 })
@@ -157,8 +180,16 @@ dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close() })
 // 里那张模块级命中表——openPalette 打开即清空、输入即覆盖。主窗口还挂着
 // 的搜索词若不按原词重查，下一次重渲染就会丢掉「仅正文命中」的结果
 dlg.addEventListener('close', () => {
+  invalidatePalette()
   window.dispatchEvent(new CustomEvent('solace-palette-closed'))
 })
+
+for (const event of ['solace-library-changing', 'solace-library-moved']) {
+  window.addEventListener(event, () => {
+    invalidatePalette()
+    if (dlg.open) dlg.close()
+  })
+}
 
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
