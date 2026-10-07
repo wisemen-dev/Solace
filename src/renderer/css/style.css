@@ -406,6 +406,21 @@ button { font-family: inherit; }
 .page-jump:focus { border-color: var(--accent); }
 .preview-total { font-size: 12px; color: var(--muted); }
 
+/* 缩放控件：底栏右端一组。翻页导航居中、缩放靠右（margin-left:auto 把
+   这一组推到底），两者互不干扰——窄窗口下缩放先被压缩而不是挤翻页钮 */
+.preview-zoom {
+  display: flex; align-items: center; gap: 6px;
+  margin-left: auto; flex-shrink: 0;
+}
+.preview-zoom .btn-ghost { padding: 3px 9px; font-size: 12px; min-width: 28px; }
+/* 状态钮：显示当前模式（适应 / 适合宽度 / 137%）。等宽字体避免百分比
+   位数变化时整排控件左右跳动 */
+.preview-zoom .zoom-state {
+  font-variant-numeric: tabular-nums;
+  min-width: 54px;
+  color: var(--text);
+}
+
 /* 目录面板（PDF 书签大纲）：锚定在预览头部与底部之间 */
 .toc-panel {
   position: absolute; left: 12px; top: 62px; bottom: 58px; width: 256px;

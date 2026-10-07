@@ -106,6 +106,13 @@
       <input id="pageJump" class="page-jump" type="text" inputmode="numeric" title="输入页码后回车跳转" />
       <span class="preview-total">/ <span id="pageTotal">0</span> 页</span>
       <button id="btnNextPage" class="btn-ghost">下一页 →</button>
+      <!-- 缩放：−/+ 步进，中间为状态钮（自动模式点它切 100%，手动态点它回到自动）。
+           放底栏与翻页钮同排——头部那一排被移动端工具簇补丁依赖，不放这里 -->
+      <div class="preview-zoom">
+        <button id="btnZoomOut" class="btn-ghost" title="缩小">−</button>
+        <button id="btnZoomFit" class="btn-ghost zoom-state" title="切换缩放模式（自动 / 100%）">适应</button>
+        <button id="btnZoomIn" class="btn-ghost" title="放大">＋</button>
+      </div>
     </div>
   </div>
 

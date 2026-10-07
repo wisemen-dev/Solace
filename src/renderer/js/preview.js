@@ -37,6 +37,135 @@ const pageJump = document.getElementById('pageJump')
 const pageTotal = document.getElementById('pageTotal')
 const errBox = document.getElementById('previewError')
 const errText = document.getElementById('previewErrorText')
+const zoomOutBtn = document.getElementById('btnZoomOut')
+const zoomInBtn = document.getElementById('btnZoomIn')
+const zoomFitBtn = document.getElementById('btnZoomFit')
+
+/* ================= 缩放与「适应」 =================
+   两种自动模式 + 手动百分比（存 localStorage——这是纯本机界面偏好，与
+   library.json 的跨设备设置分开，同 solace-opening 的策略）：
+     width —— 按可用宽度铺满，纵向滚动（长文档默认，保持既有习惯）
+     fit   —— 整页适应：取宽高两个比例里更严格的那个，整页一次可见
+              （横屏平板这类「宽而矮」视口的正确解，桌面宽扁窗口同样受益）
+     auto  —— 手动缩放态，zoomScale 记绝对比例，切换时按下表回填
+   高度自适应是必须的：fix-width 在 1120×708 这类视口下每页要滚 2 屏，
+   而全站此前没有任何缩放入口，读一页只能上下拖 */
+const ZOOM_KEY = 'solace-zoom'
+const ZOOM_MIN = 0.25
+const ZOOM_MAX = 6
+const ZOOM_STEP = 1.25
+const ZOOM_MODES = ['auto', 'width', 'fit', 'height']
+
+// 首次打开（本机无记录）的默认模式按窗口宽度定：
+//   窄（桌面默认 1024×768、分屏、窄面板）→ width：按宽铺满，既有习惯
+//   中（约 1120：平板横屏、小窗口）      → fit：整页适应
+//   宽（≥1280：桌面常规窗口）            → width：按宽铺满，字够大
+// 为什么不用「宽高比」判形态：桌面有 240px 侧栏长期占位，窗口几乎总是
+// 宽大于高，宽高比对桌面毫无区分力（实测 1267×805 会被误判为横屏平板，
+// 页宽缩到 476px 反而难读）。窗口宽度是更干净的判据。
+// 用户点过状态钮后即写入记录，此后不再受本判定影响
+function defaultZoomMode () {
+  const w = window.innerWidth || 0
+  return w >= 1000 && w <= 1200 ? 'fit' : 'width'
+}
+
+let zoomMode = readZoom().mode
+let zoomScale = readZoom().scale
+// 最近一次渲染的 scale=1 视口：缩放计算的基准（renderPage 里赋值，
+// resetDocument 里清空）。缓存它免得每次步进都重新 getPage
+let pageBase = null
+
+function readZoom () {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ZOOM_KEY) || 'null')
+    if (raw && ZOOM_MODES.includes(raw.mode)) {
+      const s = Number(raw.scale)
+      return { mode: raw.mode, scale: clampZoom(Number.isFinite(s) && s > 0 ? s : 1) }
+    }
+  } catch { /* 解析失败回默认 */ }
+  return { mode: defaultZoomMode(), scale: 1 }
+}
+
+function clampZoom (s) {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, s))
+}
+
+function saveZoom () {
+  try { localStorage.setItem(ZOOM_KEY, JSON.stringify({ mode: zoomMode, scale: zoomScale })) } catch { /* 存不下不影响本次 */ }
+}
+
+function isAutoZoom () {
+  return zoomMode !== 'auto'
+}
+
+// 每页可用尺寸：扣掉 .preview-body 的 18px 内距与画布与容器间的 18px 余量。
+// clientWidth/Height 兜底 0：非浏览器环境（渲染层冒烟测试的 DOM 替身）
+// 可能没定义这两个字段，兜底后本函数恒返回 ≥120，不会把 NaN 传进
+// fitPageViewport 的有限性校验而抛错
+function availBox () {
+  return {
+    w: Math.max(120, (body.clientWidth || 0) - 36),
+    h: Math.max(120, (body.clientHeight || 0) - 36)
+  }
+}
+
+// 计算本次渲染比例：自动模式给出精确适应比例，手动态直接用 zoomScale
+function computeScale (base) {
+  if (!isAutoZoom()) return zoomScale
+  const a = availBox()
+  const byW = a.w / base.width
+  const byH = a.h / base.height
+  if (zoomMode === 'height') return byH
+  if (zoomMode === 'fit') return Math.min(byW, byH)
+  return byW
+}
+
+// 「适应→手动」的回填：直接用当前实际算出的适应比例（所见即所得，不会跳），
+// 再 clamp 保证可用；pageBase 未就位时给一个稳妥的默认
+function effectiveManualScale () {
+  if (!pageBase) return 4 / 3
+  return clampZoom(currentFitScale())
+}
+
+// 按钮文案显示 ×100 取整：0.6667（宽 1075 整页适应）显示 67%，
+// 与用户对着 100% 的心理刻度一致
+function updateZoomUI () {
+  let label = '适应'
+  if (!isAutoZoom()) label = Math.round(zoomScale * 100) + '%'
+  else if (zoomMode === 'height') label = '适应高度'
+  zoomFitBtn.textContent = label
+  zoomFitBtn.classList.toggle('on', !isAutoZoom())
+  zoomOutBtn.disabled = !isAutoZoom() && zoomScale <= ZOOM_MIN + 1e-6
+  zoomInBtn.disabled = !isAutoZoom() && zoomScale >= ZOOM_MAX - 1e-6
+}
+
+// 改比例：重渲染当前页（渲染完再派发 solace-ink-layout，墨迹/文本层按新
+// cssW/cssH 重算，坐标映射不受影响）
+function setZoom (mode, scale) {
+  zoomMode = mode
+  if (scale !== undefined) zoomScale = clampZoom(scale)
+  saveZoom()
+  if (pdf) renderPage()
+}
+
+function zoomStep (dir) {
+  // 从自动模式步进：以当前实际适应比例为基准（所见即所得），
+  // 但受预置下限约束，避免窄面板下点「放大」反而变小
+  const from = isAutoZoom() ? Math.max(currentFitScale(), effectiveManualScale()) : zoomScale
+  setZoom('auto', clampZoom(dir > 0 ? from * ZOOM_STEP : from / ZOOM_STEP))
+}
+
+// 当前自动模式实际算出的比例（供步进取基准与 UI 判断）。
+// pageBase 尚未就位（换书/关预览后还没渲染）时退回预置值
+function currentFitScale () {
+  if (!pageBase) return effectiveManualScale()
+  const a = availBox()
+  const byW = a.w / pageBase.width
+  const byH = a.h / pageBase.height
+  if (zoomMode === 'height') return byH
+  if (zoomMode === 'fit') return Math.min(byW, byH)
+  return byW
+}
 
 function isCurrentSession (token, pdfDoc) {
   return token === sessionToken && !overlay.hidden && !!currentDoc &&
@@ -54,6 +183,7 @@ function resetDocument () {
   const old = loadingTask || pdf
   loadingTask = null
   pdf = null
+  pageBase = null
   destroyDocument(old)
   pageNum = 0
   pageJump.value = ''
@@ -167,16 +297,23 @@ async function renderPage () {
     // 取消旧会话的画布任务后等其释放 canvas；旧 getPage 则直接由 token 丢弃。
     if (canvasTask) await canvasTask.promise.catch(() => {})
     if (!isCurrentSession(token, pdfDoc)) return
-    const fitWidth = Math.min(1100, body.clientWidth - 36)
+    // scale=1 视口：既是下面的缩放基准，也随 solace-ink-layout 交给墨迹/
+    // 文本层当存储坐标系尺寸（baseW/baseH）
     const base = page.getViewport({ scale: 1 })
+    pageBase = base
+
+    // 缩放在「存储坐标系」里算（zoom 相对 scale=1），再乘 dpr 转成设备像素：
+    // 这样 zoomScale=1 就是 100%，与设备像素比无关，语义直白
+    const zoom = computeScale(base)
 
     // 按设备像素比渲染，保证文字清晰
     const dpr = window.devicePixelRatio || 1
-    const fitted = fitPageViewport(page, Math.max(0.2, fitWidth / base.width) * dpr)
+    const fitted = fitPageViewport(page, Math.max(0.2, zoom) * dpr)
     canvas.width = fitted.width
     canvas.height = fitted.height
     canvas.style.width = (fitted.viewport.width / dpr) + 'px'
     canvas.style.height = (fitted.viewport.height / dpr) + 'px'
+    updateZoomUI()
 
     const task = page.render({ canvasContext: canvas.getContext('2d'), viewport: fitted.viewport })
     state.task = task
@@ -392,6 +529,21 @@ pageJump.addEventListener('focus', () => pageJump.select())
 pageJump.addEventListener('blur', () => { if (pdf) pageJump.value = pageNum })
 
 document.getElementById('btnRetryRender').addEventListener('click', () => renderPage())
+
+/* 缩放控件：−/+ 步进（自动模式先以当前适应比例为基准，避免窄面板下
+   「放大」反而变小）；状态钮在「手动 ↔ 适应」之间切换。手动态下 +/− 到
+   边界时置灰（updateZoomUI 负责） */
+zoomOutBtn.addEventListener('click', () => zoomStep(-1))
+zoomInBtn.addEventListener('click', () => zoomStep(1))
+zoomFitBtn.addEventListener('click', () => {
+  if (isAutoZoom()) {
+    // 适应 → 手动：从当前实际比例接手，画面不跳
+    setZoom('auto', effectiveManualScale())
+  } else {
+    // 手动 → 适应：回到长文档默认的按宽铺满
+    setZoom('width')
+  }
+})
 
 // 预览内键盘翻页（有对话框开着时让位给对话框，比如命令面板里的输入；
 // 焦点在输入框时让位给光标移动——页码框里按 ←/→ 应移光标而非翻页）
