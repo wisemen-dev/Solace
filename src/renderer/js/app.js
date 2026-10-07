@@ -555,6 +555,50 @@ $('#btnTheme').addEventListener('click', async () => {
   toast(`主题：${themeLabel()}`)
 })
 
+/* ================= 顶栏溢出菜单（平板评审 3.3） =================
+   ⌘K / 主题 / 足迹 / 设置 收进「⋯」。这几个按钮的 ID 与既有监听全部保留，
+   故只是换了位置、业务逻辑零改动。
+   生命周期收口：点触发器切换、点菜单项后收起、点菜单外收起、Esc 收起。
+   收起用捕获相监听 document，避免与卡片/侧栏的事件委托互相干扰。 */
+const topbarMore = $('#topbarMore')
+const topbarMoreTrigger = $('#btnTopbarMore')
+
+function closeTopbarMore () {
+  topbarMore.classList.remove('open')
+  topbarMoreTrigger.classList.remove('on')
+  topbarMoreTrigger.setAttribute('aria-expanded', 'false')
+}
+
+topbarMoreTrigger.addEventListener('click', (e) => {
+  e.stopPropagation()
+  const open = !topbarMore.classList.contains('open')
+  topbarMore.classList.toggle('open', open)
+  topbarMoreTrigger.classList.toggle('on', open)
+  topbarMoreTrigger.setAttribute('aria-expanded', String(open))
+})
+
+// 点菜单项即收起。**必须排除触发器**：stopPropagation 只挡冒泡、不挡同一
+// 元素上的其它监听器，而 .topbar-more 自己的 click 监听会收到来自触发器
+// 子元素的事件——不排除就会「开→立即关」
+topbarMore.addEventListener('click', (e) => {
+  const btn = e.target.closest('button')
+  if (btn && btn !== topbarMoreTrigger) closeTopbarMore()
+})
+
+// 点菜单外收起（同样把触发器排除，交由它自己的 toggle 处理）
+document.addEventListener('click', (e) => {
+  if (!topbarMore.classList.contains('open')) return
+  if (topbarMoreTrigger.contains(e.target)) return
+  if (!topbarMore.contains(e.target)) closeTopbarMore()
+})
+
+// Esc 收起菜单；菜单没开时不拦（把 Esc 让给书架的返回总览等既有语义）
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !topbarMore.classList.contains('open')) return
+  e.stopPropagation()
+  closeTopbarMore()
+}, true)
+
 // 卡片进入可视区域后再取/生成封面，导入大图书馆时首屏不被拖慢
 const coverObserver = new IntersectionObserver((entries) => {
   for (const en of entries) {

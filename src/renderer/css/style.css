@@ -216,6 +216,45 @@ body::after {
 .count { font-size: 12px; color: var(--muted); margin-left: auto; }
 .index-status { font-size: 11.5px; color: var(--muted); }
 
+/* ---------- 顶栏溢出菜单（平板评审 3.3）----------
+   四个低频入口（⌘K / 主题 / 足迹 / 设置）收进一个「⋯」。理由：真机实测
+   平板 1120 宽下主区可用仅 880px，10 个控件同排只剩约 4px 余量、搜索框
+   被挤到 242px（上限 320px）。收起这四项腾出约 134px，控件数 10→6。
+   保留在顶栏的是高频三项：搜索、视图切换、批量。 */
+.topbar-more { position: relative; display: inline-flex; align-items: center; }
+
+.topbar-more-trigger {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 34px; padding: 4px 6px; font-size: 15px; line-height: 1;
+  -webkit-tap-highlight-color: transparent;
+}
+/* 触发器的「已展开」态：与 :hover 同语言（accent 描边 + accent 色），
+   但用类而非 :hover——触屏没有 hover，且展开态要能在移开指针后保持 */
+.topbar-more-trigger.on { color: var(--accent); border-color: var(--accent); }
+
+/* 注意 display:flex 会覆盖 hidden 属性的 UA 规则，故显式压回 */
+.topbar-more-trigger[hidden] { display: none; }
+
+.topbar-more-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
+  display: none; flex-direction: column; gap: 2px;
+  min-width: 148px; padding: 6px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.topbar-more.open .topbar-more-menu { display: flex; }
+/* 菜单项：左对齐满宽，与 .palette-list li 同语言（浅底 + accent） */
+.topbar-more-menu .btn-ghost {
+  display: block; width: 100%; text-align: left;
+  border-color: transparent; padding: 8px 10px; border-radius: 8px;
+  font-size: 13px; color: var(--text);
+}
+.topbar-more-menu .btn-ghost:hover {
+  background: var(--card-hover); border-color: transparent; color: var(--accent);
+}
+/* 驻留徽标进菜单后按普通入口着色（不再用强调描边——它是入口不是状态提示） */
+.topbar-more-menu .dormant-badge { color: var(--warn);}
+
 /* ---------- 封面墙 ---------- */
 .doc-grid {
   flex: 1; overflow-y: auto; padding: 20px 22px;

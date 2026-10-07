@@ -54,15 +54,25 @@
         <input id="searchInput" class="search" type="search" placeholder="搜索标题或全文…" />
         <!-- 从书架点书堆进入封面后出现：一步回书架总览（Esc 同效），免经书脊两跳 -->
         <button id="btnBackShelf" class="btn-ghost" hidden title="返回书架总览（Esc）">← 书架</button>
-        <button id="btnPalette" class="btn-ghost" title="命令面板（Ctrl+K）">⌘K</button>
         <button id="btnView" class="btn-ghost" title="切换陈列视图">📚 封面</button>
         <button id="btnBatch" class="btn-ghost" title="批量管理（多选删除）">☑ 批量</button>
-        <button id="btnTheme" class="btn-ghost" title="主题">🌓</button>
         <span id="countText" class="count"></span>
         <span id="indexStatus" class="index-status" hidden></span>
         <button id="btnDormant" class="btn-ghost dormant-badge" hidden title="">🌙 <span id="dormantCount">0</span></button>
-        <button id="btnStats" class="btn-ghost" title="阅读足迹">足迹</button>
-        <button id="btnSettings" class="btn-ghost" title="设置">⚙</button>
+        <!-- 溢出菜单：四个低频入口收进 ⋯，把顶栏还给搜索与视图切换。
+             真机实测（平板 1120 宽、主区可用 880px）下，10 个控件同排只剩
+             约 4px 余量、搜索框被挤到 242px；收进这四项可腾出约 134px，
+             搜索框回到 320px 上限，控件数 10→6。
+             按钮 ID 原样保留（app.js 的监听全按 ID 绑定），故业务逻辑零改动 -->
+        <div id="topbarMore" class="topbar-more">
+          <div id="topbarMoreMenu" class="topbar-more-menu" role="menu" aria-label="更多">
+            <button id="btnPalette" class="btn-ghost" role="menuitem" title="命令面板（Ctrl+K）">⌘K 命令面板</button>
+            <button id="btnTheme" class="btn-ghost" role="menuitem" title="主题">🌓 主题</button>
+            <button id="btnStats" class="btn-ghost" role="menuitem" title="阅读足迹">📊 阅读足迹</button>
+            <button id="btnSettings" class="btn-ghost" role="menuitem" title="设置">⚙ 设置</button>
+          </div>
+          <button id="btnTopbarMore" class="btn-ghost topbar-more-trigger" title="更多" aria-haspopup="true" aria-expanded="false" aria-controls="topbarMoreMenu">⋯</button>
+        </div>
       </header>
       <section id="docGrid" class="doc-grid"></section>
     </main>
