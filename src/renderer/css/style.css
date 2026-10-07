@@ -174,7 +174,7 @@ body::after {
 .side-list .caret {
   border: none; background: none; color: var(--muted);
   cursor: pointer; width: 13px; flex-shrink: 0;
-  font-size: 9px; padding: 0; line-height: 1;
+  font-size: 10px; padding: 0; line-height: 1;
 }
 .side-list .caret:hover { color: var(--text); }
 .side-list .caret.placeholder { visibility: hidden; }
@@ -231,7 +231,7 @@ body::after {
 .empty {
   grid-column: 1 / -1; text-align: center; color: var(--muted);
   padding: 80px 20px; font-family: var(--font-display);
-  font-size: 14.5px; line-height: 2.1; letter-spacing: 1px;
+  font-size: 15px; line-height: 2.1; letter-spacing: 1px;
 }
 .empty::before { content: '❉'; display: block; font-size: 22px; color: var(--cover-mark); margin-bottom: 10px; }
 
@@ -300,12 +300,12 @@ body::after {
 .doc-meta { font-size: 11px; color: var(--muted); }
 .doc-tags { display: flex; flex-wrap: wrap; gap: 5px; }
 .doc-tag {
-  font-size: 10.5px; background: var(--accent-soft); color: var(--accent);
+  font-size: 11px; background: var(--accent-soft); color: var(--accent);
   border-radius: 999px; padding: 1px 8px;
 }
 /* 全文命中标记：搜索词只在正文出现时提示首个命中页 */
 .doc-hit {
-  font-size: 10.5px; background: var(--accent-soft); color: var(--warn);
+  font-size: 11px; background: var(--accent-soft); color: var(--warn);
   border-radius: 999px; padding: 1px 8px; cursor: pointer;
 }
 
@@ -418,7 +418,7 @@ button { font-family: inherit; }
 .page-jump {
   width: 52px; text-align: center;
   background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-  color: var(--text); padding: 5px 6px; font-size: 12.5px; outline: none;
+  color: var(--text); padding: 5px 6px; font-size: 13px; outline: none;
 }
 .page-jump:focus { border-color: var(--accent); }
 .preview-total { font-size: 12px; color: var(--muted); }
@@ -465,7 +465,7 @@ button { font-family: inherit; }
 .toc-list button {
   display: block; width: 100%; text-align: left;
   border: none; background: none; color: var(--text);
-  font-size: 12.5px; line-height: 1.5; cursor: pointer;
+  font-size: 13px; line-height: 1.5; cursor: pointer;
   padding: 7px 9px; border-radius: 7px;
   padding-left: calc(9px + var(--d, 0) * 14px);
   transition: background 0.12s, color 0.12s;
@@ -493,7 +493,7 @@ button { font-family: inherit; }
 .notes-list li:not(.notes-empty):hover { background: var(--card-hover); }
 .note-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .note-name {
-  font-size: 12.5px; color: var(--text);
+  font-size: 13px; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .notes-list li:hover .note-name { color: var(--accent); }
@@ -578,7 +578,7 @@ button { font-family: inherit; }
 .confirm-text { font-size: 13px; color: var(--text); line-height: 1.7; margin-bottom: 10px; }
 .check-row {
   display: flex; align-items: center; gap: 8px;
-  font-size: 12.5px; color: var(--text); padding: 2px 0 6px; cursor: pointer;
+  font-size: 13px; color: var(--text); padding: 2px 0 6px; cursor: pointer;
 }
 /* display:flex 覆盖 hidden 的 UA 样式，显式压回（同 preview-overlay 的坑） */
 .check-row[hidden] { display: none; }
@@ -699,7 +699,7 @@ button { font-family: inherit; }
 .donut-hole b { font-family: var(--font-display); font-weight: 400; font-size: 22px; line-height: 1.2; }
 .donut-hole em { font-style: normal; font-size: 11px; color: var(--muted); }
 .legend { list-style: none; flex: 1; display: flex; flex-direction: column; gap: 5px; max-height: 150px; overflow-y: auto; }
-.legend li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.legend li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .legend i { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
 .legend .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .legend .v { color: var(--muted); font-size: 11.5px; }
@@ -710,7 +710,7 @@ button { font-family: inherit; }
 .stats-list li {
   display: flex; align-items: center; gap: 10px;
   background: var(--card); border: 1px solid var(--line);
-  border-radius: 9px; padding: 8px 12px; font-size: 13px;
+  border-radius: 8px; padding: 8px 12px; font-size: 13px;
 }
 .stats-list .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stats-list .when { color: var(--muted); font-size: 12px; }
@@ -766,7 +766,7 @@ button { font-family: inherit; }
 }
 .spine-row .doc-card { width: 56px; flex-shrink: 0; }
 .spine-mode .doc-card {
-  border-radius: 7px;
+  border-radius: 8px;
 }
 .spine-mode .doc-cover {
   aspect-ratio: auto;
@@ -802,14 +802,14 @@ button { font-family: inherit; }
 /* 底部细进度条（书脊模式代替进度环） */
 .spine-progress {
   position: absolute; left: 7px; right: 7px; bottom: 7px; z-index: 3;
-  height: 3px; border-radius: 2px;
+  height: 3px; border-radius: 3px;
   background: rgba(255, 255, 255, 0.32);
   pointer-events: none;
 }
 .spine-progress::after {
   content: '';
   display: block; width: calc(var(--p) * 1%); height: 100%;
-  border-radius: 2px; background: var(--accent);
+  border-radius: 3px; background: var(--accent);
 }
 .spine-progress.done::after { background: #7bd88f; }
 
@@ -927,7 +927,7 @@ body.opening .side-foot { animation: fade-in 0.6s 0.55s var(--ease-out-expo) bac
 @starting-style {
   .batch-bar:not([hidden]) { opacity: 0; transform: translate(-50%, 10px); }
 }
-.batch-bar .batch-count { font-size: 12.5px; color: var(--text); }
+.batch-bar .batch-count { font-size: 13px; color: var(--text); }
 /* 批量归档下拉：外观与栏内 btn-ghost 对齐 */
 .batch-bar select {
   background: var(--card); border: 1px solid var(--line); color: var(--text);
