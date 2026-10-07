@@ -885,9 +885,12 @@ body.opening .side-foot { animation: fade-in 0.6s 0.55s var(--ease-out-expo) bac
   padding: 2px 9px; flex-shrink: 0;
   background: var(--card);
 }
-/* 「＋新建分类」虚线卡 */
+/* 「＋新建分类」虚线卡：高度对齐 .pile-stack 的 300px（平板评审 2.5）。
+   原为 356px —— 比实心内容还高 56px，视觉上「空的东西占位更大」，
+   且虚线卡比同排书堆高出半个头、底部参差。改为与堆叠区等高后，
+   与 .pile-card（300 stack + caption）总高一致，整行齐平 */
 .pile-new {
-  height: 356px;
+  height: 300px;
   border: 2px dashed var(--line); border-radius: 14px;
   background: none; color: var(--muted);
   font-size: 26px; cursor: pointer;
