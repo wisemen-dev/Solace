@@ -426,7 +426,7 @@ function renderDocList () {
       <div class="doc-cover" data-action="preview-doc" data-id="${d.id}" title="点击预览">
         ${batchMode ? `<span class="doc-check${batchSelected.has(d.id) ? ' on' : ''}"></span>` : ''}
         <img class="doc-cover-img" data-doc-id="${d.id}" alt="" ${cached ? `src="${cached}"` : ''}/>
-        ${pct ? `<div class="progress-ring${pct >= 100 ? ' done' : ''}" style="--p:${pct}" title="读到 ${pr.page}/${pr.totalPages} 页（${pct}%）"><i></i><span>${pct >= 100 ? '✓' : pct + '%'}</span></div>` : ''}
+        ${pct ? `<div class="progress-ring${pct >= 100 ? ' done' : ''}" style="--p:${pct}" title="读到 ${pr.page}/${pr.totalPages} 页（${pct}%）"><i></i><span>${pct >= 100 ? '✓' : ''}</span></div>` : ''}
         <div class="doc-cover-ops">
           <button class="btn-ghost" data-action="open-doc" data-id="${d.id}" title="用外部阅读器打开">打开</button>
           <button class="btn-ghost" data-action="edit-doc" data-id="${d.id}">编辑</button>
@@ -440,7 +440,7 @@ function renderDocList () {
           d.tagIds.map(t => `<span class="doc-tag"># ${esc(tagName[t] || '?')}</span>`).join('')
         }</div>
         <div class="doc-meta">
-          ${d.categoryId ? esc(catName[d.categoryId] || '未知') : '未分类'} · ${fmtSize(d.size)} · 翻开 ${d.openCount} 次
+          ${d.categoryId ? esc(catName[d.categoryId] || '未知') : '未分类'} · ${fmtSize(d.size)} · 翻开 ${d.openCount} 次${pct ? ` · 读到 ${pr.page}/${pr.totalPages} 页` : ''}
         </div>
       </div>
     </div>`

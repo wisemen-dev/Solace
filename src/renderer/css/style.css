@@ -96,6 +96,12 @@ body {
   height: 100vh;
   overflow: hidden;
   user-select: none;
+  /* 字号控制权收回自己手里：全站尺寸按 px 精调（含仅 8.5px 的进度环数字、
+     以及依赖精确坐标的墨迹/摘录文本层），一旦被系统字号的 font boosting
+     整体放大就会错版——而文本层自身声明了 text-size-adjust:none 不跟着
+     变，两者会错位、墨迹与摘录标记对不上正文。此为两端的共同前提 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 /* 纸纹颗粒：SVG 噪声贴在内容之下、氛围之上，给平涂底色一层材质感。
@@ -303,7 +309,15 @@ body::after {
   border-radius: 999px; padding: 1px 8px; cursor: pointer;
 }
 
-/* 封面进度环：conic-gradient + mask 抠成圆环，读毕（100%）变绿打勾 */
+/* 封面进度环：conic-gradient + mask 抠成圆环，读毕（100%）变绿打勾。
+   两处修正（平板评审 2.4）：
+   ① 未填充段原为 rgba(255,255,255,.35)——环画在**封面上**，浅色封面
+      （浏览器打印页、白底书封）上这一段几乎不可见，只剩一个孤零零的
+      数字。改用与主题无关的中性深色：封面不属于主题色域，--text 在
+      墨水主题下是浅色，在浅封面上同样会消失，所以不能跟主题走
+   ② 环内数字原为 8.5px（真机约 1.4mm）且白色压在任意封面上——既不可读
+      也不保证对比度。改为环内只在读毕时放「✓」，百分比移入卡片元信息行
+      的「读到 N/M 页」，把小字从图形里挪到有底色的正文区 */
 .progress-ring {
   position: absolute; top: 7px; right: 7px; z-index: 3;
   width: 34px; height: 34px;
@@ -312,16 +326,19 @@ body::after {
 }
 .progress-ring i {
   position: absolute; inset: 0; border-radius: 50%;
-  background: conic-gradient(var(--accent) calc(var(--p) * 1%), rgba(255, 255, 255, 0.35) 0);
+  background: conic-gradient(var(--accent) calc(var(--p) * 1%), rgba(18, 22, 27, 0.5) 0);
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px));
   mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px));
 }
 .progress-ring.done i {
-  background: conic-gradient(#7bd88f calc(var(--p) * 1%), rgba(255, 255, 255, 0.35) 0);
+  background: conic-gradient(#7bd88f calc(var(--p) * 1%), rgba(18, 22, 27, 0.5) 0);
 }
 .progress-ring span {
   position: relative;
-  font-size: 8.5px; font-weight: 700; color: #fff;
+  /* 只承载读毕的 ✓：12px 白字配 1px 深描边，在任意封面底色上都可读
+     （原为 8.5px 百分比数字，已移入卡片元信息行） */
+  font-size: 12px; font-weight: 700; color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
 }
 
 /* ---------- 按钮 ---------- */
