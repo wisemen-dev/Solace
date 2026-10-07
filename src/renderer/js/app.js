@@ -319,9 +319,21 @@ async function refreshTextHits (kw) {
 /* ================= 主区：陈列视图 =================
    grid 封面墙 / spine 书脊 / shelf 书架（分类书堆总览，参考 Lumin） */
 
-// 分类分布图表与书架书堆共用的调色板（按顶级分类顺序循环取色）
+// 分类调色板：按顶级分类顺序循环取色。书架书堆与书脊组头经
+// topCategoryColor 取色（子分类继承顶级色）；分类分布图表按自己的
+// 排序直接索引
 const PALETTE = ['#6ea8fe', '#7bd88f', '#ffd166', '#ef8354', '#c792ea', '#4dd0e1', '#f06292', '#aed581', '#ffb74d']
 const MISC_COLOR = '#5b6672'
+
+// 未分类与悬空引用（元数据损坏指向已删分类）用补色；
+// 其余沿 parentId 上溯到顶级分类后按其在顶级序列中的位置取色
+function topCategoryColor (catId) {
+  if (!catId) return MISC_COLOR
+  const topIndex = new Map(data.categories.filter(c => !c.parentId).map((c, i) => [c.id, i]))
+  let c = data.categories.find(x => x.id === catId)
+  while (c && c.parentId) c = data.categories.find(x => x.id === c.parentId)
+  return c ? PALETTE[topIndex.get(c.id) % PALETTE.length] : MISC_COLOR
+}
 
 function visibleDocs () {
   const kw = normText(filters.keyword)
@@ -337,6 +349,13 @@ function visibleDocs () {
     if (kw && !normText(d.title).includes(kw) && !normText(d.fileName).includes(kw) && !textHit(d.id, kw)) return false
     return true
   })
+}
+
+// 阅读进度百分比（0–100）：无进度记录或页数异常时记 0。
+// 封面墙右上角进度环与书脊底部细进度条共用一套口径
+function progressPct (d) {
+  const pr = d.progress
+  return pr && pr.totalPages >= 1 ? Math.min(100, Math.round(pr.page / pr.totalPages * 100)) : 0
 }
 
 function renderDocList () {
@@ -388,30 +407,21 @@ function renderDocList () {
     return
   }
 
-  $('#docGrid').innerHTML = docs.map((d, i) => {
-    const cached = cache.get(d.id)
-    // 阅读进度：封面墙显示右上角进度环，书脊模式显示底部细进度条
-    const pr = d.progress
-    const pct = pr && pr.totalPages >= 1 ? Math.min(100, Math.round(pr.page / pr.totalPages * 100)) : 0
-    // 全文命中标记：标题/文件名没中但正文命中时提示首个命中页
-    const hitPage = nkw && !normText(d.title).includes(nkw) && !normText(d.fileName).includes(nkw)
-      ? textHit(d.id, nkw)
-      : 0
+  // 书脊陈列：按分类分组（每个分类一行，组内放不下自动换行）
+  if (sessionView === 'spine') {
+    renderSpineShelves(docs, entrance)
+  } else {
+    $('#docGrid').innerHTML = docs.map((d, i) => {
+      const cached = cache.get(d.id)
+      // 阅读进度：封面墙显示右上角进度环（进度环 title 还需要 pr 的原始页码）
+      const pr = d.progress
+      const pct = progressPct(d)
+      // 全文命中标记：标题/文件名没中但正文命中时提示首个命中页
+      const hitPage = nkw && !normText(d.title).includes(nkw) && !normText(d.fileName).includes(nkw)
+        ? textHit(d.id, nkw)
+        : 0
 
-    if (sessionView === 'spine') {
-      // 书脊陈列：纯浏览视图（点击预览、拖拽归档仍可用）
       return `
-    <div class="doc-card${entrance ? ' enter' : ''}" data-id="${d.id}" draggable="true" style="--i:${i}">
-      <div class="doc-cover" data-action="preview-doc" data-id="${d.id}"
-           title="${esc(d.title)}${pct ? `（读到 ${pct}%）` : ''} · 点击预览">
-        <img class="doc-cover-img" data-doc-id="${d.id}" alt="" ${cached ? `src="${cached}"` : ''}/>
-        <span class="spine-name">${esc(d.title)}</span>
-        ${pct ? `<i class="spine-progress${pct >= 100 ? ' done' : ''}" style="--p:${pct}"></i>` : ''}
-      </div>
-    </div>`
-    }
-
-    return `
     <div class="doc-card${entrance ? ' enter' : ''}" data-id="${d.id}" draggable="true" style="--i:${i}">
       <div class="doc-cover" data-action="preview-doc" data-id="${d.id}" title="点击预览">
         ${batchMode ? `<span class="doc-check${batchSelected.has(d.id) ? ' on' : ''}"></span>` : ''}
@@ -434,13 +444,64 @@ function renderDocList () {
         </div>
       </div>
     </div>`
-  }).join('')
+    }).join('')
+  }
 
-  // 没有缓存的封面交给观察器：滚动可见时才读取/生成
+  // 没有缓存的封面交给观察器：滚动可见时才读取/生成（三个陈列视图共用）
   for (const img of document.querySelectorAll('.doc-cover-img:not([src])')) {
     const doc = data.documents.find(x => x.id === img.dataset.docId)
     if (doc) coverObserver.observe(img)
   }
+}
+
+/* ================= 书脊视图：分类分组陈列 =================
+   每个分类独占一行，组内 flex-wrap——一行放不下的书脊自动排进下一行，
+   不再把所有分类挤作一排。组序与侧栏分类树一致（父前子后），
+   「未分类」收尾；只列有书的分类，空分类没有书脊可排。 */
+
+function renderSpineShelves (docs, entrance) {
+  const cache = coverCache()
+  const byCat = new Map()
+  for (const d of docs) {
+    // 未分类口径与 visibleDocs 一致（?? null：空串不算未分类）
+    const key = d.categoryId ?? null
+    if (!byCat.has(key)) byCat.set(key, [])
+    byCat.get(key).push(d)
+  }
+  const groups = orderedCategories(false)
+    .filter(({ cat }) => byCat.has(cat.id))
+    .map(({ cat }) => ({ key: cat.id, name: cat.name, docs: byCat.get(cat.id) }))
+  // 兜底：指向已不存在分类的书（元数据损坏）不从书脊视图凭空消失
+  const known = new Set(groups.map(g => g.key))
+  for (const [key, ds] of byCat) {
+    if (key && !known.has(key)) groups.push({ key, name: '未知', docs: ds })
+  }
+  if (byCat.has(null)) groups.push({ key: null, name: '未分类', docs: byCat.get(null) })
+
+  let i = 0 // 入场 stagger 序号跨组连续：整墙书脊按序错峰入场
+  $('#docGrid').innerHTML = groups.map(g => `
+    <section class="spine-group">
+      <div class="spine-group-head">
+        <span class="pile-dot" style="background:${topCategoryColor(g.key)}"></span>
+        <span class="spine-group-name">${esc(g.name)}</span>
+        <span class="pile-badge">${g.docs.length} 本</span>
+      </div>
+      <div class="spine-row">${
+        g.docs.map(d => {
+          const cached = cache.get(d.id)
+          const pct = progressPct(d)
+          return `
+        <div class="doc-card${entrance ? ' enter' : ''}" data-id="${d.id}" draggable="true" style="--i:${i++}">
+          <div class="doc-cover" data-action="preview-doc" data-id="${d.id}"
+               title="${esc(d.title)}${pct ? `（读到 ${pct}%）` : ''} · 点击预览">
+            <img class="doc-cover-img" data-doc-id="${d.id}" alt="" ${cached ? `src="${cached}"` : ''}/>
+            <span class="spine-name">${esc(d.title)}</span>
+            ${pct ? `<i class="spine-progress${pct >= 100 ? ' done' : ''}" style="--p:${pct}"></i>` : ''}
+          </div>
+        </div>`
+        }).join('')
+      }</div>
+    </section>`).join('')
 }
 
 /* ================= 顶栏：视图与主题切换 ================= */
@@ -522,10 +583,10 @@ const PILE_STACKS = {
 function renderPileShelf (entrance) {
   const topCats = data.categories.filter(c => !c.parentId)
   const counts = categoryCounts()
-  const piles = topCats.map((c, i) => ({
+  const piles = topCats.map(c => ({
     key: c.id,
     name: c.name,
-    color: PALETTE[i % PALETTE.length],
+    color: topCategoryColor(c.id),
     count: counts.counts[c.id] || 0,
     books: docsInCategory(c.id).slice(0, 4)
   }))

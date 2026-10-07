@@ -217,8 +217,8 @@ body::after {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--cover-min, 172px), 1fr));
   gap: 16px; align-content: start;
   /* 行高必须按内容撑开：默认 auto 行在定高容器里会被压缩到恰好塞满——
-     封面被压扁成横条，内容不溢出导致滚动条也永远不出现。三个视图
-     （封面墙/书脊/书架）共用本规则 */
+     封面被压扁成横条，内容不溢出导致滚动条也永远不出现。网格陈列的
+     封面墙/书架两视图共用本规则（书脊是纵向分组流，见下） */
   grid-auto-rows: max-content;
 }
 
@@ -713,10 +713,26 @@ button { font-family: inherit; }
 /* ---------- 书脊模式（视图切换） ----------
    第二种陈列：卡片变成一排立在架上的书。封面做底、书名竖排，
    悬停时书往外抽出，读览进度变成书脊底部的细进度条。 */
+/* 分类分组陈列：外层从网格改为纵向分组流，每组一个分类；
+   组内 flex-wrap——一行放不下的书脊自动排进下一行 */
 .doc-grid.spine-mode {
-  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
 }
+.spine-group { min-width: 0; }
+.spine-group-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 10px;
+}
+.spine-group-name {
+  font-family: var(--font-display); font-size: 13.5px; font-weight: 400;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.spine-row {
+  display: flex; flex-wrap: wrap; gap: 12px;
+}
+.spine-row .doc-card { width: 56px; flex-shrink: 0; }
 .spine-mode .doc-card {
   border-radius: 7px;
 }

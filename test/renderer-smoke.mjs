@@ -307,6 +307,13 @@ check('palette/settings 模块加载无异常', errors.length === 0, errors)
 // 顶栏按钮切两次：grid → spine → shelf（显式切换，应当落库）
 el('#btnView').emit('click')
 await new Promise(r => setTimeout(r, 20))
+// 书脊分组陈列：每个分类一组（组序同侧栏树、未分类收尾），组内放不下自动换行
+const spineHtml = el('#docGrid').innerHTML
+check('书脊视图渲染分类分组（组头 + 换行行容器）',
+  spineHtml.includes('spine-group') && spineHtml.includes('spine-row') && spineHtml.includes('spine-group-head'))
+check('书脊组序与侧栏一致：技术组在前、未分类收尾，书归各组',
+  /技术[\s\S]*?Rust 程序设计语言[\s\S]*?未分类[\s\S]*?无关标题/.test(spineHtml), spineHtml.slice(0, 120))
+check('书脊组头带计数徽章', spineHtml.includes('1 本'))
 el('#btnView').emit('click')
 await new Promise(r => setTimeout(r, 20))
 const persistedAfterSwitch = calls.updateSettings.filter(p => 'viewMode' in p).map(p => p.viewMode)
