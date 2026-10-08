@@ -331,8 +331,15 @@ function topCategoryColor (catId) {
   if (!catId) return MISC_COLOR
   const topIndex = new Map(data.categories.filter(c => !c.parentId).map((c, i) => [c.id, i]))
   let c = data.categories.find(x => x.id === catId)
-  while (c && c.parentId) c = data.categories.find(x => x.id === c.parentId)
-  return c ? PALETTE[topIndex.get(c.id) % PALETTE.length] : MISC_COLOR
+  // seen 防环（全量审查 P1）：moveCategory 有环校验，但 library.json 与
+  // 桌面端互传或手工编辑可带入环——无 seen 时每次渲染死循环冻结界面。
+  // 成环时上溯停在环内最后到达的分类，按补色兜底（不修数据）
+  const seen = new Set()
+  while (c && c.parentId && !seen.has(c.id)) {
+    seen.add(c.id)
+    c = data.categories.find(x => x.id === c.parentId)
+  }
+  return c && !c.parentId ? PALETTE[topIndex.get(c.id) % PALETTE.length] : MISC_COLOR
 }
 
 function visibleDocs () {
