@@ -4,9 +4,12 @@
 :root, [data-theme='ink'] {
   --bg: #101418;
   --panel: #151b22;
-  --card: #1b232d;
-  --card-hover: #212b37;
-  --line: #263140;
+  /* card 提亮一档（2026-10-08 视觉审查）：原 #1b232d 与 panel 明度差仅约
+     3%，夜间弱光下卡片边界「糊」在一起、扫视分不清层级；提到 #202b39
+     差约 8%，dusk/paper 两主题无此问题不动 */
+  --card: #202b39;
+  --card-hover: #263445;
+  --line: #2c3a4c;
   --text: #e8edf2;
   --muted: #8b98a5;
   --accent: #6ea8fe;
@@ -32,6 +35,7 @@
   --card: #faf6ec;
   --card-hover: #fffdf5;
   --line: #d9cfb8;
+  --img-bg: #f6f1e4;
   --text: #40372a;
   --muted: #8b7d64;
   --accent: #a9682f;
@@ -42,7 +46,6 @@
   --cover-grad: linear-gradient(160deg, #e9e1cf 0%, #ddd2b9 100%);
   --cover-mark: rgba(169, 104, 47, 0.2);
   --overlay-bg: rgba(64, 55, 42, 0.5);
-  --img-bg: #ffffff;
   --scrollbar-hover: #c9bda1;
   /* 纸张氛围：顶部自然光 + 四周极轻的旧纸泛黄 */
   --atmosphere:
@@ -164,7 +167,14 @@ body::after {
   font-size: 13px; color: var(--text);
 }
 .side-list li:hover { background: var(--card); }
-.side-list li.active { background: var(--accent-soft); color: var(--accent); }
+/* 选中态减重（2026-10-08 视觉审查）：原 accent-soft 大底色块面积大、
+   饱和不低，在侧栏与内容区争视线（书架总览时尤为明显）——改为 3px
+   分类色左条 + accent 文字，选中语义不减、视觉权重让位内容区 */
+.side-list li.active {
+  background: none;
+  color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 .side-list li.dragging { opacity: 0.45; }
 .side-list .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-list .badge { font-size: 11px; color: var(--muted); }
@@ -312,6 +322,15 @@ body::after {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
   font-size: 36px; color: var(--cover-mark);
+}
+/* 封面分隔线（2026-10-08 视觉审查）：白底封面 PDF 与浅色卡片「白上叠白」
+   融成一片、封面像漂浮的纸——1px 内描边压在图之上（z 顺序在 img 后的
+   伪元素天然在上），三主题统一封面边界。::after 不挡指针 */
+.doc-cover::after {
+  content: '';
+  position: absolute; inset: 0; z-index: 1;
+  box-shadow: inset 0 0 0 1px var(--line);
+  pointer-events: none;
 }
 .doc-cover-img {
   position: relative; z-index: 1;
