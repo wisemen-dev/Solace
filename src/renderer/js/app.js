@@ -377,8 +377,6 @@ function renderDocList () {
   const cache = coverCache()
   const nkw = normText(filters.keyword)
 
-  $('#countText').textContent = `共 ${data.documents.length} 本 · 显示 ${docs.length} 本`
-
   const grid = $('#docGrid')
   // 封面卡片大小（设置 → 外观）：只影响封面墙，书脊/书架视图有各自固定列宽
   const COVER_MIN = { small: '140px', medium: '172px', large: '220px' }
@@ -644,8 +642,6 @@ function renderPileShelf (entrance) {
       books: uncat.slice(0, 4)
     })
   }
-
-  $('#countText').textContent = `共 ${data.documents.length} 本 · ${piles.length} 摞书堆`
 
   const grid = $('#docGrid')
   if (!data.documents.length && !piles.length) {
