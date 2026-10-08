@@ -209,16 +209,19 @@ body::after {
 }
 .search:focus { border-color: var(--accent); }
 .index-status { font-size: 11.5px; color: var(--muted); }
+/* 顶栏右推弹性：原先由 .count（margin-left:auto，已删）承担。恒在的
+   spacer 比给右组各元素分派 auto 更稳——任一/全部右组元素 hidden 时
+   其余照常贴右，🌙 显示时也紧贴 ⋯ 不悬空（两个 auto 会平分空隙） */
+.topbar-spacer { flex: 1 1 auto; }
 
 /* ---------- 顶栏溢出菜单（平板评审 3.3）----------
    四个低频入口（⌘K / 主题 / 足迹 / 设置）收进一个「⋯」。理由：真机实测
    平板 1120 宽下主区可用仅 880px，10 个控件同排只剩约 4px 余量、搜索框
    被挤到 242px（上限 320px）。收起这四项腾出约 134px，控件数 10→6。
    保留在顶栏的是高频三项：搜索、视图切换、批量。 */
-/* 顶栏右推弹性原先由 .count（margin-left:auto，已删）承担，现分给两个
-   右组元素：常显的 ⋯ 与偶现的 🌙——两个 auto 平分剩余空间，hidden 的
-   元素不产生盒、不参与分配，任一缺席都不影响另一个贴右 */
-.topbar-more { position: relative; display: inline-flex; align-items: center; margin-left: auto; }
+/* 顶栏右推弹性原先由 .count（margin-left:auto，已删）承担，现由恒在的
+   .topbar-spacer 承担（见上方规则）——右组元素一律不设 auto */
+.topbar-more { position: relative; display: inline-flex; align-items: center; }
 
 .topbar-more-trigger {
   display: inline-flex; align-items: center; justify-content: center;
@@ -753,7 +756,7 @@ button { font-family: inherit; }
 .stats-list .reason { color: var(--warn); font-size: 12px; }
 .stats-list .empty-line { color: var(--muted); justify-content: center; padding: 12px; }
 
-.dormant-badge { color: var(--warn); border-color: var(--warn); opacity: 0.85; margin-left: auto; }
+.dormant-badge { color: var(--warn); border-color: var(--warn); opacity: 0.85; }
 .dormant-badge:hover { color: var(--warn); border-color: var(--warn); opacity: 1; }
 
 /* ---------- 庆祝彩蛋 ---------- */
