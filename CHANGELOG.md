@@ -3,7 +3,7 @@
 本项目的所有显著变更记录在此文件中。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
-## [Unreleased]
+## [0.18.0] - 2026-10-14
 
 ### 变更
 - **渲染层平台分支（补丁上游化 C2，与平板端共同实施）**：平板端曾以 30 处 sync 补丁注入的平台差异全部上移进本仓库源码，改用三类运行时机制（平板端正常消费、桌面端零行为差异）：`window.solace.isMobile` 分支（桌面 undefined 走原路径——打开书/拖入/回收站文案/设置监视目录/笔记打开/⌘K 去键盘语）、可选钩子（`window.__spineGroups` 等可选调用——书脊分组桌面口径提为 `spineGroupsByCategory`、笔记行内容与排序、删除通知）、事件派发（`solace-ink-layout/ink-close/outline` no-op，preview.js 收敛 fireWin helper 兼 node 测试桩）。**对桌面端的直接修复**：theme.js 标签保留（溢出菜单「🌓 主题」项的文字曾被 paint() 整写吃掉）。平板端 sync 补丁 44→14，剩余为路径差异与平板专有 DOM。79+渲染冒烟全绿，平板真机回归通过
