@@ -272,7 +272,13 @@ function applyShelf (shelf) {
     syncViewButton()
   }
   $('#searchInput').value = filters.keyword
-  return refreshTextHits(filters.keyword).then(ok => { if (ok) renderAll() })
+  // refreshTextHits 返回 false（期间搜索词又变）时不渲染——但 entrancePending
+  // 是「一次性消费」标记，留着会在下一次按键渲染时整墙重播入场动画
+  // （全量审查）：无论渲染与否都消费掉，词变后的渲染自会再次置位
+  return refreshTextHits(filters.keyword).then(ok => {
+    entrancePending = false
+    if (ok) renderAll()
+  })
 }
 
 /* ================= 搜索：全文命中由主进程按需查询 =================
@@ -285,7 +291,7 @@ let searchTicket = 0
 
 function scheduleFullText (delay) {
   clearTimeout(searchTimer)
-  if (libraryChanging) return
+  if (!data || libraryChanging) return // data null（初始加载失败）下读 sessionId 抛错（全量审查）
   const sessionId = data.sessionId
   const ticket = ++searchTicket
   searchTimer = setTimeout(async () => {
@@ -309,7 +315,7 @@ function onKeywordTyped (kw) {
 // 返回 false 表示期间用户又改了搜索词，本次渲染作废
 async function refreshTextHits (kw) {
   clearTimeout(searchTimer)
-  if (libraryChanging) return false
+  if (!data || libraryChanging) return false // 同 scheduleFullText：data null 防御
   const sessionId = data.sessionId
   const ticket = ++searchTicket
   await searchTextIndex(kw, sessionId)
@@ -1253,6 +1259,9 @@ window.addEventListener('solace-settings', (e) => {
   if ('theme' in patch) applyTheme(prefs)
   if ('viewMode' in patch) {
     // 设置面板改的是「启动时的默认视图」：当前会话也跟着切过去（与旧行为一致）
+    exitBatch() // 与顶栏 btnView 同纪律（全量审查）：批量勾选只在封面墙提供，
+    // 不退的话切到书脊后勾选仍在——书脊模板无复选框，此后点书全是无可见
+    // 反馈的隐形勾选，批量栏可删掉「看不见」的书
     sessionView = patch.viewMode
     entrancePending = true
     fromShelf = false
@@ -1398,7 +1407,13 @@ function openEditDialog (doc) {
 
 $('#btnEditSave').addEventListener('click', async () => {
   const sessionId = editingSession
-  if (!isCurrentLibrary(sessionId)) return
+  if (!isCurrentLibrary(sessionId)) {
+    // 库切换后不悬留（全量审查）：原先直接 return，对话框留着旧库选项、
+    // 保存看似无响应；关掉并说明，取消路径本来就可用
+    $('#editDialog').close()
+    toast('资料库已切换，本次修改未保存')
+    return
+  }
   const patch = {
     title: $('#editTitle').value.trim() || '未命名文档',
     categoryId: $('#editCat').value || null,
@@ -1582,7 +1597,7 @@ let watchRefreshTimer = null
 window.solace.onWatchEvent?.((ev) => {
   if (libraryChanging || (ev.sessionId !== undefined && ev.sessionId !== data?.sessionId)) return
   if (ev.type === 'imported') {
-    ev.docs.forEach(d => ensureQueued(d.id, data.sessionId))
+    ev.docs.forEach(d => ensureQueued(d.id, data?.sessionId))
     const names = ev.docs.slice(0, 3).map(d => `《${d.title}》`).join('、')
     toast(`自动入库 ${ev.docs.length} 本：${names}${ev.docs.length > 3 ? '…' : ''}`)
     clearTimeout(watchRefreshTimer)

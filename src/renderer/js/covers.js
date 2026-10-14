@@ -13,6 +13,18 @@ const activePdfs = new Set()
 let generation = 0
 let draining = null
 
+// 内存上限（全量审查）：dataURL 约 30-80KB/本，万本库浏览可累积数百 MB。
+// FIFO 截断即可——淘汰后再需要会走库内 covers/<id>.jpg 读回（有盘缓存，
+// 不会重新渲染首页生成）
+const COVER_CACHE_MAX = 400
+function cacheCover (docId, dataUrl) {
+  if (covers.size >= COVER_CACHE_MAX) {
+    const oldest = covers.keys().next().value
+    covers.delete(oldest)
+  }
+  covers.set(docId, dataUrl)
+}
+
 export function coverCache () {
   return covers
 }
@@ -51,7 +63,7 @@ async function loadCover (task) {
     if (task.generation !== generation) return
     release(task)
     if (dataUrl) {
-      covers.set(task.doc.id, dataUrl)
+      cacheCover(task.doc.id, dataUrl)
       fillImgs(task.doc.id, dataUrl)
     } else {
       enqueueGenerate(task.doc, task.sessionId)
@@ -85,7 +97,7 @@ async function drain () {
         const dataUrl = await generateCover(task)
         if (task.generation !== generation) return
         if (dataUrl) {
-          covers.set(task.doc.id, dataUrl)
+          cacheCover(task.doc.id, dataUrl)
           fillImgs(task.doc.id, dataUrl)
         }
       } catch {

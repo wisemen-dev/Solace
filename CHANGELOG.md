@@ -3,6 +3,11 @@
 本项目的所有显著变更记录在此文件中。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [Unreleased]
+
+### 修复
+- **全量代码审查修复批（桌面主进程 + 渲染层并行深审；含平板端修复回移与 [hidden] 收口上游化）**：**P1×2**——① 导入 0 字节 PDF 静默入库（importPdfLocked 无 size 检查，空文件哈希照常算出产出打不开的空书条目；平板端已修的同源 bug 回移）；② **中文 IME 组字期 Enter 误触发**（palette 命令面板 / dialog 输入框 / 预览页码框三处 keydown 均未检查 isComposing——拼音组词按 Enter 确认候选词时 key 仍报 'Enter'，命令面板会直接执行高亮项、对话框半截拼音提交；三处统一 `!e.isComposing` 守卫，经 sync 平板同享）。**P2×7**——③ 设置面板切默认视图不退批量态（solace-settings 的 viewMode 分支缺顶栏同款的 exitBatch：切到书脊后勾选仍在而书脊无复选框，此后点书全是隐形勾选、批量栏可删「看不见」的书）；④ textindex 两处损坏备份固定名 .corrupt 二次损坏覆盖上一份（统一抽 nextBackupName 顺延命名，主库 library.json 原有顺延一并收编，三处同型一处实现——顺带完成一次复用收敛）；⑤ updateSettings 对被污染 settings/patch 无类型守卫（互传/手改可带入原始类型，'theme' in patch 抛 TypeError 设置全瘫）；⑥ sweepOrphans 漏 files/&lt;uuid&gt;.pdf.tmp（importPdfLocked 暂存崩溃残留不匹配 APP_FILE_RE 永不清）；⑦ 封面内存缓存无上限（dataURL 30-80KB/本，万本库浏览累积数百 MB；加 400 本 FIFO 截断，淘汰后走库内 covers 读回不重新生成）；⑧ relocate 整库复制 cpSync 同步阻塞主进程（GB 级复制期间整个应用冻结；换 fsp.cp 让出事件循环，staging 回滚路径不变，relocateLocked async 化）；⑨ watcher 启动扫描 walk 无环保护（监视目录下 junction 环无限递归栈溢出；深度 6 封顶与平板 walkTree 对齐）。**P3 精选**——⑩ 初始加载失败（data null）后搜索/面板路径三处抛 TypeError；⑪ 库切换后编辑对话框悬留（保存无响应——改关闭+提示）；⑫ applyShelf 词变路径 entrancePending 泄漏（下一次按键整墙重播入场）；⑬ setCover base64 严格预检（Buffer 宽松解码静默产出坏封面）；⑭ notes.list 只把 ENOENT/ENOTDIR 当空表（catch-all 把权限故障谎报成「没有笔记」，面板静默变空）；⑮ CSS 清理三处（.preview-page 死规则、.settings-foot 重复定义、li.active:hover 冗余；.doc-hit 经查平板 doc-info 有真实用途保留）。**复用优化（上游化）**——[hidden] 全局收口规则上游化进 style.css（平板端三例同类 bug 的根治规则回写源头，桌面侧 6 处逐元素补丁保留作冗余防御）。79 主套测试全绿（relocate stub 随 fsp.cp 迁移）、渲染冒烟全过；平板 sync 44 锚点全过 + 159 全绿 + 真机验收（IME isComposing Enter 面板不执行、批量态经设置切视图正确退出）。
+
 ## [0.17.0] - 2026-10-08
 
 ### 新增

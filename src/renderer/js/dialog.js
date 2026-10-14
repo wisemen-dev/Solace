@@ -14,8 +14,10 @@ export function askText (title, initial = '') {
     document.querySelector('#inputDialogCancel').onclick = () => { settled = true; dlg.close(); resolve(null) }
     dlg.onclose = () => { if (!settled) resolve(null) }
     // 无 form 的对话框里 Enter 不会原生触发任何按钮：输入框回车显式接「确定」，
-    // 纯文本录入的标准行为，也顺手消掉了「必须用鼠标点确定」的别扭
-    input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); ok() } }
+    // 纯文本录入的标准行为，也顺手消掉了「必须用鼠标点确定」的别扭。
+    // isComposing（全量审查）：中文 IME 组字期按 Enter 是「确认候选词」，
+    // keydown 的 key 仍报 'Enter'——不检查会半截拼音直接提交
+    input.onkeydown = (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); ok() } }
     dlg.showModal()
     input.focus()
     input.select()

@@ -270,9 +270,10 @@ test('interrupted copy leaves no adoptable partial library and the same target c
   fs.mkdirSync(destination)
   const unrelated = path.join(destination, 'keep.txt')
   fs.writeFileSync(unrelated, 'keep destination files')
+  // relocate 已异步化（fsp.cp），stub 目标随之（全量审查）
   const copy = fs.cpSync
   let fail = true
-  t.mock.method(fs, 'cpSync', (from, to, options) => {
+  t.mock.method(fsp, 'cp', async (from, to, options) => {
     if (fail) {
       fs.mkdirSync(path.join(to, 'files'), { recursive: true })
       fs.copyFileSync(path.join(from, 'library.json'), path.join(to, 'library.json'))
@@ -321,7 +322,7 @@ test('moving waits for a queued note deletion and copies only the remaining note
   await entered
   const copy = fs.cpSync
   let copyStarted = false
-  t.mock.method(fs, 'cpSync', (...args) => { copyStarted = true; return copy(...args) })
+  t.mock.method(fsp, 'cp', async (...args) => { copyStarted = true; return copy(...args) })
   const moving = library.relocate(path.join(base, 'notes-moved'), { move: true })
   await new Promise(resolve => setImmediate(resolve))
   const copiedBeforeDeletion = copyStarted

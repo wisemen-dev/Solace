@@ -514,7 +514,7 @@ function stepPage (delta) {
 // 页码输入框：回车跳转——想给第 20 页记笔记，直接输入 20 回车再「＋ 新建」，
 // 模板即记录该页，不用逐页翻
 pageJump.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
+  if (e.key === 'Enter' && !e.isComposing) { // isComposing：IME 组字回车不跳页
     e.preventDefault()
     jumpTo(pageJump.value)
     pageJump.blur()

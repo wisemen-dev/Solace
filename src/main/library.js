@@ -29,6 +29,17 @@ function setTrashHandler (fn) {
   trashItem = typeof fn === 'function' ? fn : null
 }
 
+// 损坏备份顺延命名（全量审查统一三处）：固定 .corrupt 名在二次损坏时会
+// 覆盖上一份可抢救的副本——library.json 主库与 textindex 两处原先各写
+// 各的（主库有顺延、索引侧固定名），统一走这里（平板端 nextCorruptName
+// 同策略，两端一致）
+function nextBackupName (p) {
+  let backup = `${p}.corrupt`
+  let suffix = 1
+  while (fs.existsSync(backup)) backup = `${p}.corrupt.${suffix++}`
+  return backup
+}
+
 function init (baseDir, opts = {}) {
   pointerFile = opts.pointerFile || null
   startupNotice = null
@@ -67,9 +78,7 @@ function init (baseDir, opts = {}) {
     // 用户唯一的副本，应留给用户手动恢复或重新导入
     const bad = path.join(defaultRoot, 'library.json')
     if (err.code !== 'LIBRARY_CORRUPT') throw err
-    let backup = bad + '.corrupt'
-    let suffix = 1
-    while (fs.existsSync(backup)) backup = `${bad}.corrupt.${suffix++}`
+    const backup = nextBackupName(bad)
     fs.renameSync(bad, backup)
     // textindex.json / textindex/ 一律原地不动：docId 没变，用户从
     // library.json.corrupt 里抢救回条目后索引还能直接复用，没有理由先毁掉它
@@ -305,6 +314,9 @@ async function importPdfLocked (filePath, check) {
   const stat = await fsp.stat(filePath)
   check()
   if (!stat.isFile()) throw new Error('不是常规文件')
+  // 空文件拒绝（全量审查回移自平板端）：0 字节照常入库会产出打不开的
+  // 空书条目——哈希正常算出、去重也拦不住
+  if (stat.size <= 0) throw new Error('文件为空（0 字节），未导入')
   if (path.extname(filePath).toLowerCase() !== '.pdf') throw new Error('仅支持 PDF 文件')
   const id = crypto.randomUUID()
   const target = documentPath(rootDir, 'files', id, '.pdf')
@@ -470,6 +482,13 @@ function sweepOrphans () {
 
   tryRm(dataFile + '.tmp')
   tryRm(textIndexMetaFile + '.tmp')
+  // files/ 的崩溃残留（全量审查）：importPdfLocked 的暂存 <uuid>.pdf.tmp
+  // 不匹配下方 APP_FILE_RE（含 .tmp 后缀），崩溃后永不清——单独按后缀扫
+  let staged = []
+  try { staged = fs.readdirSync(path.join(rootDir, 'files')) } catch { /* 目录尚未建立 */ }
+  for (const name of staged) {
+    if (name.endsWith('.pdf.tmp')) tryRm(path.join(rootDir, 'files', name))
+  }
   let shards = []
   try { shards = fs.readdirSync(textIndexDir) } catch { /* 目录尚未建立 */ }
   for (const name of shards) {
@@ -549,7 +568,7 @@ function switchRoot (target) {
   }
 }
 
-function relocateLocked (dir, opts) {
+async function relocateLocked (dir, opts) {
   if (!pointerFile) throw new Error('资料库位置已由 SOLACE_DATA_DIR 环境变量固定，无法更改')
   const target = targetRootOf(dir)
   if (samePath(target, rootDir)) throw new Error('目标位置就是当前资料库位置')
@@ -577,7 +596,10 @@ function relocateLocked (dir, opts) {
     let published = false
     let committed = false
     try {
-      fs.cpSync(oldRoot, copiedRoot, { recursive: true })
+      // 异步复制（全量审查）：cpSync 在 GB 级库复制期间冻结主进程事件循环、
+      // 整个应用无响应；本函数在 enqueueMutation 的 async 链内，换 fsp.cp
+      // 让出事件循环即可，成功/失败路径（staging 回滚）不变
+      await fsp.cp(oldRoot, copiedRoot, { recursive: true })
       // Publish only the completed copy. Preserve a pre-existing empty target
       // so a failed pointer commit can restore exactly the original directory.
       if (fs.existsSync(target)) {
@@ -809,8 +831,8 @@ function readTextIndexMeta () {
       return { version: 1, entries: obj.entries }
     }
   } catch { /* 落到下面按损坏处理 */ }
-  // meta 损坏不值得挡门：改名留档，索引退回「无」，渲染层会按需重建
-  try { fs.renameSync(textIndexMetaFile, textIndexMetaFile + '.corrupt') } catch { /* 改不了名也继续 */ }
+  // meta 损坏不值得挡门：改名留档（顺延编号，二次损坏不覆盖上一份），索引退回「无」，渲染层会按需重建
+  try { fs.renameSync(textIndexMetaFile, nextBackupName(textIndexMetaFile)) } catch { /* 改不了名也继续 */ }
   return { version: 1, entries: {} }
 }
 
@@ -851,7 +873,7 @@ function migrateLegacyTextIndex () {
     fs.renameSync(legacyTextIndexFile, legacyTextIndexFile + '.migrated')
   } catch {
     // 旧文件损坏 / 磁盘满：改名留档，索引按「无」继续，渲染层会重建
-    try { fs.renameSync(legacyTextIndexFile, legacyTextIndexFile + '.corrupt') } catch { /* 下次启动再试 */ }
+    try { fs.renameSync(legacyTextIndexFile, nextBackupName(legacyTextIndexFile)) } catch { /* 下次启动再试 */ }
   }
 }
 
@@ -942,6 +964,11 @@ function setCover (id, dataUrl) {
   findDoc(id)
   const m = /^data:image\/(png|jpeg);base64,(.+)$/.exec(String(dataUrl || ''))
   if (!m) throw new Error('无效的封面数据')
+  // base64 合法性预检（全量审查）：Buffer.from 的宽松解码会把非法字符
+  // 静默错解成坏字节产出损坏封面文件——先严格校验再落盘（平板端
+  // base64ToBytes 同为严格解码）
+  const B64 = /^[A-Za-z0-9+/]+={0,2}$/
+  if (!B64.test(m[2])) throw new Error('无效的封面数据')
   fs.writeFileSync(documentPath(rootDir, 'covers', id, '.jpg'), Buffer.from(m[2], 'base64'))
   findDoc(id).hasCover = true
   save()
@@ -1086,7 +1113,11 @@ function removeSmartShelf (id) {
 // 枚举项与数值下界都要卡住：theme/viewMode 曾归在「字符串」里原样落库，
 // 与「非法值拒之门外」的说法不符（渲染层各有兜底才没出事）
 function updateSettings (patch) {
-  if (!data.settings) data.settings = {}
+  // settings 被污染成原始类型（互传/手改 library.json）时自愈（平板端同款
+  // 防御）：'theme' in patch / data.settings[key]= 在污染对象上抛 TypeError、
+  // 设置功能全瘫；patch 非对象同样自愈为空操作
+  if (typeof data.settings !== 'object' || data.settings === null || Array.isArray(data.settings)) data.settings = {}
+  if (typeof patch !== 'object' || patch === null) patch = {}
   const strings = ['notesEditorPath', 'pdfReaderPath', 'externalToolPath', 'watchFolder', 'watchCategory']
   const booleans = ['resumeReading', 'confetti', 'openingAnimation', 'watchEnabled']
   const numbers = { dormantDays: 1, indexPageLimit: 1 }

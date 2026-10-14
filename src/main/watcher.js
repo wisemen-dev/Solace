@@ -181,16 +181,20 @@ async function startupScan (run) {
   if (!isCurrent(run)) return
   try {
     const files = []
-    const walk = (p) => {
+    const walk = (p, depth) => {
+      // 深度封顶（全量审查）：监视目录下的 junction/符号链接环会让
+      // isDirectory() 恒真、无限递归栈溢出——深度 6 与 Olib 目录结构的
+      // 合理深度对齐（平板端 walkTree 同上限）
+      if (depth > 6) return
       let entries
       try { entries = fs.readdirSync(p, { withFileTypes: true }) } catch { return }
       for (const ent of entries) {
         const full = path.join(p, ent.name)
-        if (ent.isDirectory()) walk(full)
+        if (ent.isDirectory()) walk(full, depth + 1)
         else if (ent.isFile() && ent.name.toLowerCase().endsWith('.pdf')) files.push(full)
       }
     }
-    walk(run.dir)
+    walk(run.dir, 0)
     for (const f of files) {
       // 扫描中途被新一轮 configure 取代（换目录/停用/关监视）即中断；
       // 旧目录的残余文件也不再导入

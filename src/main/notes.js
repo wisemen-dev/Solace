@@ -38,8 +38,12 @@ async function list (docId) {
   let entries
   try {
     entries = await fsp.readdir(dir, { withFileTypes: true })
-  } catch {
-    return { notes: [] } // 这本书还没有笔记目录
+  } catch (err) {
+    // 只有「目录不存在」按空表处理（全量审查，与平板 notes-core 同口径）；
+    // 权限/IO 故障原样上抛——catch-all 会把真故障谎报成「没有笔记」，
+    // 笔记面板静默变空误导用户
+    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return { notes: [] }
+    throw err
   }
   const notes = []
   for (const ent of entries) {

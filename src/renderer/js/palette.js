@@ -157,6 +157,7 @@ input.addEventListener('input', () => {
 })
 
 input.addEventListener('keydown', (e) => {
+  if (e.isComposing) return // 中文 IME 组字期：Enter=确认候选词，不是执行命令
   if (e.key === 'ArrowDown') { e.preventDefault(); updateActive(1) }
   else if (e.key === 'ArrowUp') { e.preventDefault(); updateActive(-1) }
   else if (e.key === 'Enter') { e.preventDefault(); execute(items[activeIdx]) }

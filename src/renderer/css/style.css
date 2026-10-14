@@ -1,3 +1,10 @@
+/* [hidden] 全局收口（全量审查上游化，与平板 mobile.css 同款）：本文件多处
+   规则给按钮/面板设 display（flex 等），特异性压过 UA 对 [hidden] 的
+   display:none 后 hidden 属性形同虚设——平板端已发生三例（抽屉把手、返回
+   钮、查看器追加钮）。下方既有逐元素补丁（.topbar-more-trigger[hidden]
+   等）保留作冗余防御；「隐藏但占位」的场景应使用 visibility/opacity */
+[hidden] { display: none !important; }
+
 /* ---------- 主题 ----------
    三套配色由 <html data-theme> 切换（theme-boot.js 首帧设置，theme.js 维护）：
    墨水 ink（默认暗色）/ 纸张 paper（暖白米色）/ 黄昏 dusk（琥珀暗色） */
@@ -189,8 +196,7 @@ body::after {
 .side-list .caret:hover { color: var(--text); }
 .side-list .caret.placeholder { visibility: hidden; }
 .side-list .ops { display: none; gap: 2px; }
-.side-list li:hover .ops { display: inline-flex; }
-.side-list li.active:hover .ops { display: inline-flex; }
+.side-list li:hover .ops { display: inline-flex; } /* active 行为其子集，无需单列（全量审查） */
 .side-list .ops button {
   border: none; background: none; color: var(--muted);
   cursor: pointer; font-size: 11px; padding: 0 3px;
@@ -445,7 +451,6 @@ button { font-family: inherit; }
   font-family: var(--font-display); font-size: 15px; font-weight: 400; letter-spacing: 0.5px; flex: 1;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.preview-page { font-size: 12px; color: var(--muted); }
 .preview-actions { display: flex; gap: 8px; }
 .preview-body {
   position: relative;
@@ -704,8 +709,6 @@ button { font-family: inherit; }
   background: var(--card); border: 1px solid var(--line); border-radius: 8px;
   padding: 7px 10px; font-family: Consolas, 'Courier New', monospace;
 }
-.settings-foot { margin-top: 10px; font-size: 11px; color: var(--muted); text-align: right; }
-
 /* ---------- Toast ---------- */
 .toast-box {
   position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
