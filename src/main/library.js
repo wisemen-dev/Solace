@@ -3,6 +3,8 @@ const fsp = require('fs/promises')
 const path = require('path')
 const crypto = require('crypto')
 const { assertDocumentId, containedPath, documentPath } = require('./library-paths')
+// 双端共享纯函数（平板仓库 sync-www.mjs 反向搬运同一文件；纪律见文件头）
+const shared = require('./library-shared.cjs')
 
 // 资料库数据层：全部元数据存于 library.json，PDF 副本存于 files/<id>.pdf。
 // 写入统一走 save() 的「临时文件 + 原子重命名」，避免中断损坏数据。
@@ -465,10 +467,11 @@ async function removeDocLocked (id, opts) {
 // 自己放进 files/ 的 rust-book.pdf 之类当成孤儿永久删除（从旧备份恢复
 // library.json 时尤其致命——备份之后导入的书全会被判成孤儿）。
 // 只匹配严格 UUID，其它文件一律不动；仍被占用的留到下次启动再试。
-// 注意 notes/ 不在清扫范围：保留笔记的目录也在其中，宁可冗余不可误删
-const APP_FILE_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(pdf|jpg)$/i
+// 注意 notes/ 不在清扫范围：保留笔记的目录也在其中，宁可冗余不可误删。
+// 两条正则已上移共享层（口径与平板端永远一致——清扫误删是最高危操作）
+const APP_FILE_RE = shared.APP_FILE_RE
 // 同上，分片写入中断留下的 <uuid>.json.tmp
-const APP_TMP_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json\.tmp$/i
+const APP_TMP_RE = shared.APP_TMP_RE
 
 // 启动时的清理分成两类，风险完全不同：
 //  - 写入残留（*.tmp）：原子写入在 writeFileSync 与 renameSync 之间断电才会
@@ -698,38 +701,16 @@ function markOpened (id, type = 'open') {
 // 按天累计的翻开次数：history 有 200 条上限（只服务「最近翻开」时间线与命令
 // 面板的最近书目），若拿它去算时间窗口，翻得多的时候会得出「累计翻开 260 次
 // 但近 30 天只有 3 次」这种自相矛盾的数字。窗口统计因此单独立账，按自然日
-// 累计、只保留最近 400 天
-const OPEN_DAYS_KEEP = 400
-const dayKey = (d) => {
-  const p = n => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
-}
-
+// 累计、只保留最近 400 天。dayKey/countOpenDay/getOpenStats 已上移共享层
+// （library-shared.cjs，双端同源——曾经的双份维护发生过漂移）
 function countOpenDay (at) {
-  if (!data.openDays || typeof data.openDays !== 'object') data.openDays = {}
-  const k = dayKey(new Date(at))
-  data.openDays[k] = (data.openDays[k] || 0) + 1
-  const keys = Object.keys(data.openDays)
-  if (keys.length > OPEN_DAYS_KEEP) {
-    keys.sort()
-    for (const old of keys.slice(0, keys.length - OPEN_DAYS_KEEP)) delete data.openDays[old]
-  }
+  shared.countOpenDay(at, data)
 }
 
 // 近 N 个自然日（含今天）的翻开次数。与 countOpenDay 共用 dayKey，
 // 口径不会两边对不上
 function getOpenStats () {
-  const days = data.openDays || {}
-  const d = new Date()
-  let opens7d = 0
-  let opens30d = 0
-  for (let i = 0; i < 30; i++) {
-    const n = days[dayKey(d)] || 0
-    if (i < 7) opens7d += n
-    opens30d += n
-    d.setDate(d.getDate() - 1)
-  }
-  return { opens7d, opens30d }
+  return shared.getOpenStats(data.openDays, new Date())
 }
 
 // 0.9.x 及之前建的库只有 history：用它回填一份按天账（受 200 条上限所限，
@@ -741,7 +722,7 @@ function normalizeOpenDays () {
     if (!h || !h.at) continue
     const d = new Date(h.at)
     if (Number.isNaN(d.getTime())) continue
-    const k = dayKey(d)
+    const k = shared.dayKey(d)
     data.openDays[k] = (data.openDays[k] || 0) + 1
   }
 }
@@ -768,9 +749,9 @@ function setProgress (id, page, totalPages) {
 // 索引始终是「可重建的缓存」：任何损坏都按无索引处理，由渲染层重新提取。
 
 // 搜索关键词归一化：必须与渲染层 util.js 的 normText 保持一致（主进程无法
-// import ESM 模块，规则在这里复制一份，改一处要同步改另一处）。渲染层传来的
-// 已经是归一化后的关键词，这里只是兜底
-const normalizeKeyword = (s) => String(s || '').toLowerCase().replace(/\s+/g, '')
+// import ESM 模块，规则复制一份，改一处要同步改另一处）。渲染层传来的
+// 已经是归一化后的关键词，这里只是兜底。数据层版已上移共享层
+const normalizeKeyword = shared.normalizeKeyword
 
 // 分片正文缓存：搜索时首次从磁盘读取并解析，之后走内存，避免逐键重扫磁盘。
 // 按字符数封顶并淘汰最早的条目，防止超大库把主进程内存撑爆
@@ -993,26 +974,10 @@ function addCategory (name, parentId = null) {
   return cat
 }
 
-// 拖拽换父：parentId 为 null 表示移到顶级。沿父链向上检查，禁止移到自己子孙下面成环
+// 拖拽换父：parentId 为 null 表示移到顶级。沿父链向上检查，禁止移到自己子孙下面成环。
+// 校验段上移共享层（assertMoveCategory，双端同源——环可由互传/手改带入）
 function moveCategory (id, parentId) {
-  const cat = data.categories.find(c => c.id === id)
-  if (!cat) throw new Error(`分类不存在: ${id}`)
-  const target = parentId || null
-  if (target === id) throw new Error('不能移动到自身')
-  if (target != null) {
-    let cursor = data.categories.find(c => c.id === target)
-    if (!cursor) throw new Error('目标分类不存在')
-    // visited 防御：library.json 是人工可编辑的，父链可能已被写成环
-    // （本函数会拦住经应用产生的环，拦不住手改的）。撞环说明数据异常，
-    // 明确报错而不是沿环无限循环把这条 IPC 卡死
-    const seen = new Set()
-    while (cursor) {
-      if (cursor.id === id) throw new Error('不能移动到自己的子分类下')
-      if (seen.has(cursor.id)) throw new Error('分类层级数据异常（parentId 成环），请先修复 library.json')
-      seen.add(cursor.id)
-      cursor = data.categories.find(c => c.id === cursor.parentId) || null
-    }
-  }
+  const { cat, target } = shared.assertMoveCategory(data.categories, id, parentId)
   if (cat.parentId === target) return cat
   cat.parentId = target
   save()
@@ -1115,28 +1080,12 @@ function removeSmartShelf (id) {
 function updateSettings (patch) {
   // settings 被污染成原始类型（互传/手改 library.json）时自愈（平板端同款
   // 防御）：'theme' in patch / data.settings[key]= 在污染对象上抛 TypeError、
-  // 设置功能全瘫；patch 非对象同样自愈为空操作
+  // 设置功能全瘫；patch 非对象同样自愈为空操作。
+  // 白名单归一上移共享层（键集为两端并集：库互搬时设置不丢），
+  // changed 判定顺带省掉无谓写盘
   if (typeof data.settings !== 'object' || data.settings === null || Array.isArray(data.settings)) data.settings = {}
   if (typeof patch !== 'object' || patch === null) patch = {}
-  const strings = ['notesEditorPath', 'pdfReaderPath', 'externalToolPath', 'watchFolder', 'watchCategory']
-  const booleans = ['resumeReading', 'confetti', 'openingAnimation', 'watchEnabled']
-  const numbers = { dormantDays: 1, indexPageLimit: 1 }
-  const enums = {
-    coverSize: ['small', 'medium', 'large'],
-    theme: ['auto', 'ink', 'paper', 'dusk'],
-    viewMode: ['grid', 'spine', 'shelf']
-  }
-  for (const key of strings) if (key in patch) data.settings[key] = String(patch[key])
-  for (const key of booleans) if (key in patch) data.settings[key] = patch[key] === true
-  for (const key of Object.keys(numbers)) {
-    if (!(key in patch)) continue
-    const n = Math.floor(Number(patch[key]))
-    if (Number.isFinite(n) && n >= numbers[key]) data.settings[key] = n
-  }
-  for (const key of Object.keys(enums)) {
-    if (key in patch && enums[key].includes(patch[key])) data.settings[key] = patch[key]
-  }
-  save()
+  if (shared.applySettingsPatch(data.settings, patch)) save()
   return data.settings
 }
 
