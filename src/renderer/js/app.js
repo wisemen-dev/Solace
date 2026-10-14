@@ -470,8 +470,8 @@ function renderDocList () {
    不再把所有分类挤作一排。组序与侧栏分类树一致（父前子后），
    「未分类」收尾；只列有书的分类，空分类没有书脊可排。 */
 
-function renderSpineShelves (docs, entrance) {
-  const cache = coverCache()
+// 桌面口径的分组（平板端由 __spineGroups 钩子替换，见 renderSpineShelves）
+function spineGroupsByCategory (docs) {
   const byCat = new Map()
   for (const d of docs) {
     // 未分类口径与 visibleDocs 一致（?? null：空串不算未分类）
@@ -488,15 +488,28 @@ function renderSpineShelves (docs, entrance) {
     if (key && !known.has(key)) groups.push({ key, name: '未知', docs: ds })
   }
   if (byCat.has(null)) groups.push({ key: null, name: '未分类', docs: byCat.get(null) })
+  return groups
+}
+
+function renderSpineShelves (docs, entrance) {
+  const cache = coverCache()
+  // 分组口径钩子（补丁上游化）：平板端 mobile.js 先于 app.js 注册
+  // window.__spineGroups（顶级归并/搜索与单组平铺/悬空 id 归未分类，设计书
+  // SPINE-GROUP-DESIGN）；桌面无钩子走以下既有口径。钩子缺席于平板属异常
+  // 时序，退化为空陈列：显式暴露问题优于按桌面口径静默错排
+  const spine = window.__spineGroups
+    ? window.__spineGroups(docs, data.categories, normText(filters.keyword) || '')
+    : { flat: false, groups: spineGroupsByCategory(docs) }
+  const groups = spine.groups
 
   let i = 0 // 入场 stagger 序号跨组连续：整墙书脊按序错峰入场
   $('#docGrid').innerHTML = groups.map(g => `
     <section class="spine-group">
-      <div class="spine-group-head">
+      ${spine.flat ? '' : `<div class="spine-group-head" data-action="filter-cat" data-id="${g.key || 'none'}" title="只看该分类">
         <span class="pile-dot" style="background:${topCategoryColor(g.key)}"></span>
         <span class="spine-group-name">${esc(g.name)}</span>
         <span class="pile-badge">${g.docs.length} 本</span>
-      </div>
+      </div>`}
       <div class="spine-row">${
         g.docs.map(d => {
           const cached = cache.get(d.id)
@@ -862,7 +875,7 @@ $('#btnBatchDel').addEventListener('click', async () => {
   const res = await askConfirm({
     title: `批量删除 ${ids.length} 本文档`,
     text: '所选书籍将从书架移除，库内副本与封面一并删除（原文件不受影响）。',
-    checkLabel: '同时删除所选书籍的全部笔记（移入系统回收站）',
+    checkLabel: window.solace.isMobile ? '同时删除所选书籍的全部笔记（直接删除，无回收站）' : '同时删除所选书籍的全部笔记（移入系统回收站）',
     okText: '删除',
     checkDefault: false // 默认保留笔记：误按回车不该丢内容
   })
@@ -886,7 +899,7 @@ $('#btnBatchDel').addEventListener('click', async () => {
   refresh()
   const parts = [`已删除 ${removed} 本`]
   if (keptNotes.length) parts.push(`${keptNotes.length} 本的笔记保留在资料库 notes/ 下`)
-  if (purged) parts.push(`${purged} 本的笔记已永久删除（系统回收站不可用）`)
+  if (purged) parts.push(`${purged} 本的笔记已永久删除（${window.solace.isMobile ? '平板端无回收站' : '系统回收站不可用'}）`)
   if (leftovers.size) parts.push(`${leftovers.size} 个文件正被占用，重启应用后自动清理`)
   toast(parts.join('；'))
 })
@@ -1011,6 +1024,13 @@ document.body.addEventListener('click', async (e) => {
         break
       }
       case 'open-doc': {
+        // 平板端无外部阅读器，直接进内置预览（补丁上游化；isMobile 由平板
+        // 桥注入，桌面 undefined 走外部打开）
+        if (window.solace.isMobile) {
+          const doc = data.documents.find(d => d.id === id)
+          if (doc) openPreview(doc)
+          break
+        }
         await window.solace.openDoc(id, sessionId)
         refresh()
         break
@@ -1026,7 +1046,7 @@ document.body.addEventListener('click', async (e) => {
         const res = await askConfirm({
           title: '删除文档',
           text: `《${doc.title}》将从书架移除，库内副本与封面一并删除（原文件不受影响）。`,
-          checkLabel: '同时删除这本书的全部笔记（移入系统回收站）',
+          checkLabel: window.solace.isMobile ? '同时删除这本书的全部笔记（直接删除，无回收站）' : '同时删除这本书的全部笔记（移入系统回收站）',
           okText: '删除',
           checkDefault: false // 默认保留笔记：误按回车不该丢内容
         })
@@ -1036,7 +1056,7 @@ document.body.addEventListener('click', async (e) => {
           refresh()
           const parts = []
           if (out.notesKeptTo) parts.push(`笔记已保留在资料库 notes/${out.notesKeptTo}/`)
-          if (out.notesPurged) parts.push('笔记已永久删除（系统回收站不可用）')
+          if (out.notesPurged) parts.push(`笔记已永久删除（${window.solace.isMobile ? '平板端无回收站' : '系统回收站不可用'}）`)
           if (out.leftovers && out.leftovers.length) parts.push(`${out.leftovers.join('、')} 正被其他程序占用，重启应用后自动清理`)
           toast(`《${out.title}》已删除${parts.length ? '；' + parts.join('；') : ''}`)
         }
@@ -1212,6 +1232,14 @@ $('#btnAddShelf').addEventListener('click', async () => {
   try { await window.solace.saveShelf(name, f, sessionId); refresh() } catch (err) { toast(err.message) }
 })
 
+// 命令面板入口去键盘语（补丁上游化）：平板端无键盘，「⌘K」前缀与
+// Ctrl+K 提示是桌面残留；运行时改写为与其余菜单项一致的「emoji + 文字」
+// 标签（面板本体经软键盘输入/点按列表项均可用，功能不动）
+if (window.solace.isMobile) {
+  const pb = document.getElementById('btnPalette')
+  if (pb) { pb.textContent = '🔍 命令面板'; pb.title = '命令面板' }
+}
+
 // 命令面板（palette.js）派发的筛选与动作
 window.addEventListener('solace-palette', async (e) => {
   if (libraryChanging) return
@@ -1340,6 +1368,7 @@ window.addEventListener('solace-library-moved', async (e) => {
 window.addEventListener('dragover', (e) => e.preventDefault())
 window.addEventListener('drop', async (e) => {
   e.preventDefault()
+  if (window.solace.isMobile) return // 触屏无拖拽导入；平板经「导入 PDF」按钮（系统选择器）
   if (!data || libraryChanging) return
   const sessionId = data.sessionId
   const types = [...(e.dataTransfer?.types || [])]

@@ -48,8 +48,13 @@ async function fillPanel () {
   $('#setPdfReader').value = s.pdfReaderPath || ''
   $('#setNotesEditor').value = s.notesEditorPath || ''
   $('#setTool').value = s.externalToolPath || ''
-  $('#setWatchFolder').value = s.watchFolder || ''
-  $('#setWatchEnabled').checked = !!s.watchFolder && s.watchEnabled !== false
+  // 监视文件夹（补丁上游化）：平板端显示 SAF 目录名（uri 不可读不可手输）、
+  // 启用判据看 watchTreeUri（watchFolder 恒不存在）；注意用 .value 赋值而非
+  // setAttribute('value')——后者只设默认值，面板重开会显示脏值。
+  // setOlibPackage 平板专有 DOM，桌面无此元素可选链跳过
+  $('#setWatchFolder').value = window.solace.isMobile ? (s.watchFolderName || '') : (s.watchFolder || '')
+  $('#setOlibPackage') && ($('#setOlibPackage').value = s.externalToolPackage || '')
+  $('#setWatchEnabled').checked = (window.solace.isMobile ? !!s.watchTreeUri : !!s.watchFolder) && s.watchEnabled !== false
   // 自动入库分类下拉随当前资料库的分类重建
   $('#setWatchCategory').innerHTML = '<option value="">不归分类</option>' +
     (data.categories || []).map(c =>
@@ -158,8 +163,22 @@ $('#btnBrowseTool').addEventListener('click', async () => {
 
 /* ---- 自动入库（监视文件夹） ---- */
 
-$('#setWatchFolder').addEventListener('change', (e) => save({ watchFolder: e.target.value.trim() }))
+// 平板端输入框只读（补丁上游化），change 不会由用户触发；防御性短路
+$('#setWatchFolder').addEventListener('change', (e) => {
+  if (window.solace.isMobile) return
+  save({ watchFolder: e.target.value.trim() })
+})
 $('#btnBrowseWatch').addEventListener('click', async () => {
+  // 平板端走 SAF 系统目录选择器，返回 { uri, name }（补丁上游化）
+  if (window.solace.isMobile) {
+    const r = await window.solace.pickDirectory({ title: '选择自动入库监视文件夹' })
+    if (r && r.uri) {
+      $('#setWatchFolder').value = r.name
+      $('#setWatchEnabled').checked = true // 选了文件夹即视为想启用
+      save({ watchTreeUri: r.uri, watchFolderName: r.name, watchEnabled: true })
+    }
+    return
+  }
   if (relocating) return
   const sessionId = panelSession
   try {
@@ -249,3 +268,29 @@ $('#btnRelocate').addEventListener('click', async () => {
 document.getElementById('btnSettings').addEventListener('click', openSettings)
 document.getElementById('btnSettingsClose').addEventListener('click', () => dlg.close())
 dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close() }) // 点 backdrop 关闭
+
+/* ---- 平板端：下载工具（Olib）包名（补丁上游化；DOM 为平板 index.html
+   专有，桌面无此元素可选链静默跳过） ---- */
+$('#setOlibPackage')?.addEventListener('change', (e) => save({ externalToolPackage: e.target.value.trim() }))
+$('#btnDetectOlib')?.addEventListener('click', async () => {
+  let apps
+  try {
+    apps = await window.solace.findApps() // 无关键字 = Olib 多关键字检测（含 open_library 包名）
+  } catch (err) {
+    window.toast?.(`检测失败：${err.message || err}`)
+    return
+  }
+  if (!apps.length) { window.toast?.('未检测到 Olib，请确认已安装；也可手动填写包名'); return }
+  if (apps.length === 1) {
+    $('#setOlibPackage').value = apps[0].package
+    save({ externalToolPackage: apps[0].package })
+    window.toast?.(`已选定 ${apps[0].label}（${apps[0].package}）`)
+    return
+  }
+  const picked = await askChoice({
+    title: '选择下载工具',
+    text: '检测到多个可能的应用，选择哪一个作为「打开外部工具」的目标。',
+    choices: apps.slice(0, 4).map(a => ({ label: `${a.label}（${a.package}）`, value: a.package, primary: a.package.includes('open_library') }))
+  })
+  if (picked) { $('#setOlibPackage').value = picked; save({ externalToolPackage: picked }) }
+})

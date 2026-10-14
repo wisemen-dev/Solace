@@ -91,6 +91,9 @@ async function drain () {
   draining = epoch
   try {
     while (queue.length && epoch === generation) {
+      // 预览打开时封面队列让路（补丁上游化；currentPreviewId 桌面端同样
+      // 由 preview.js 维护）：pdf.js 解析仍与翻页争 CPU，读书永远优先
+      if (window.currentPreviewId) { await new Promise(r => setTimeout(r, 400)); continue }
       const task = queue.shift()
       inflight.set(task.doc.id, task)
       try {
@@ -113,10 +116,12 @@ async function drain () {
 
 async function generateCover (task) {
   try {
-    const buffer = await window.solace.readPreview(task.doc.id, task.sessionId)
+    // URL 直读（补丁上游化）：平板端桥有 getDocUrl 时走 URL；桌面回落 IPC 字节
+    const loadOpts = window.solace.getDocUrl
+      ? { url: await window.solace.getDocUrl(task.doc.id), ...docParams }
+      : { data: await window.solace.readPreview(task.doc.id, task.sessionId), ...docParams }
     if (task.generation !== generation) return null
-    const data = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
-    task.loadingTask = pdfjsLib.getDocument({ data, ...docParams })
+    task.loadingTask = pdfjsLib.getDocument(loadOpts)
     activePdfs.add(task)
     task.pdf = await task.loadingTask.promise
     if (task.generation !== generation) return null

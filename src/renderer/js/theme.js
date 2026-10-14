@@ -76,7 +76,11 @@ function paint (settings) {
   const btn = document.getElementById('btnTheme')
   if (!btn) return
   const icon = resolved === 'paper' ? '☀️' : resolved === 'dusk' ? '🌆' : '🌙'
-  btn.textContent = mode === 'auto' ? `🌓 ${icon}` : icon
+  // 文字尾缀保留（补丁上游化，桌面同 bug）：顶栏溢出菜单项是「图标 + 文字」
+  // 标签，整写 textContent 会把文字吃掉（auto 态变「🌓 🌙」、手动态变光杆
+  // 图标，菜单里唯一没名字的项）。首见时把文字尾缀存进 data-label，重写补回
+  if (!btn.dataset.label) btn.dataset.label = btn.textContent.replace(/^[^A-Za-z\u4e00-\u9fa5]*/, '').trim()
+  btn.textContent = ((mode === 'auto' ? `🌓 ${icon}` : icon) + (btn.dataset.label ? ' ' + btn.dataset.label : ''))
   btn.title = `主题：${MODE_LABEL[mode]}（点击切换）`
 }
 

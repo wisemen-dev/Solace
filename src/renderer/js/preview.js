@@ -4,6 +4,13 @@ import { openNotes, closeNotes, isNotesOpen } from './notespanel.js'
 import { esc } from './util.js'
 import { fitPageViewport } from './pdfcanvas.js'
 
+// 向窗口派发事件（solace-ink-layout / solace-ink-close / solace-outline，
+// 平板端墨迹层/文本层/章节总结消费；桌面无监听者 no-op）。node 测试桩环境
+// 无 CustomEvent 构造器——跳过派发（桩断言不看事件）
+const fireWin = (name, detail) => {
+  if (typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent(name, { detail }))
+}
+
 let pdf = null
 let pageNum = 0
 let loadingTask = null
@@ -215,6 +222,9 @@ export function closePreview () {
   // 关闭前把还没落库的进度立刻写掉，避免丢掉最后翻到的那一页。
   // 返回落库的 Promise：调用方（app.js）须等它完成再刷新列表，
   // 否则 getLibrary 与 setProgress 并发竞争，会读回旧进度。
+  // 墨迹层冲刷保存并复位（补丁上游化，平板端消费；在进度落库之前，避免与
+  // closePreview 的异步 flush 竞争——墨迹冲刷自身是异步的，失败各自 toast）
+  fireWin('solace-ink-close')
   const flushed = flushProgress()
   resetDocument()
   closeNotes()
@@ -232,12 +242,15 @@ export function isPreviewOpen () {
 async function loadDoc (doc, jumpPage, token) {
   const { id, sessionId } = doc
   try {
-    const buffer = await window.solace.readPreview(id, sessionId)
+    // 加载点 URL 直读（补丁上游化）：平板端桥提供 getDocUrl 时走 URL（WebView
+    // 原生拦截流式返回，内容不过 JS 桥）；桌面端 preload 无此方法，自动回落
+    // IPC 字节路径（送来的就是 Uint8Array，直接用——再包一层 new Uint8Array
+    // 会白复制一整份文件，大 PDF 上就是几十 MB 的无谓内存与耗时）
+    const loadOpts = window.solace.getDocUrl
+      ? { url: await window.solace.getDocUrl(id), ...docParams }
+      : { data: await window.solace.readPreview(id, sessionId), ...docParams }
     if (!isCurrentSession(token)) return
-    // IPC 送来的就是 Uint8Array，直接用（再包一层 new Uint8Array 会白复制
-    // 一整份文件——大 PDF 上就是几十 MB 的无谓内存与耗时）
-    const data = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
-    const task = pdfjsLib.getDocument({ data, ...docParams })
+    const task = pdfjsLib.getDocument(loadOpts)
     loadingTask = task
     const pdfDoc = await task.promise
     // 过期结果必须销毁丢弃：否则会把已关闭的预览「复活」——pdf 挂着永不
@@ -313,6 +326,18 @@ async function renderPage () {
     canvas.height = fitted.height
     canvas.style.width = (fitted.viewport.width / dpr) + 'px'
     canvas.style.height = (fitted.viewport.height / dpr) + 'px'
+    // 页面布局尺寸设定后通知墨迹层与文本层（补丁上游化，平板端消费；桌面
+    // 无监听者派发为 no-op）：w/h 设备像素尺寸，cssW/cssH 显示尺寸，
+    // baseW/baseH 是存储坐标系（scale=1 视口）尺寸——kx 由两者相除得出；
+    // pageObj/viewport 供摘录链接的文本层取文本与按 CSS 尺度重建视口
+    fireWin('solace-ink-layout', {
+      docId: currentDoc && currentDoc.id,
+      page: targetPage,
+      w: fitted.width, h: fitted.height,
+      cssW: fitted.viewport.width / dpr, cssH: fitted.viewport.height / dpr,
+      baseW: base.width, baseH: base.height,
+      pageObj: page, viewport: fitted.viewport
+    })
     updateZoomUI()
 
     const task = page.render({ canvasContext: canvas.getContext('2d'), viewport: fitted.viewport })
@@ -423,6 +448,9 @@ async function loadOutline (pdfDoc, token) {
   }
   if (!flat.length) return
   tocBtn.hidden = false
+  // 目录构建完成即派发大纲（补丁上游化，平板端章节总结消费；全层级，
+  // chapter-prompt 自取 depth 0 为章）；无大纲不派发。桌面无监听者 no-op
+  fireWin('solace-outline', { items: flat.map(({ title, page, depth }) => ({ title, page, depth })) })
   tocList.innerHTML = flat.map(it => `
     <li style="--d:${it.depth}">
       ${it.page

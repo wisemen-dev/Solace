@@ -128,6 +128,8 @@ async function drain () {
   emit()
   try {
     while (pending.size && epoch === generation) {
+      // 预览打开时索引队列让路（补丁上游化）：读书优先于后台索引提取
+      if (window.currentPreviewId) { await new Promise(r => setTimeout(r, 500)); continue }
       const task = pending.values().next().value
       pending.delete(task.docId)
       inflight.set(task.docId, task)
@@ -150,12 +152,13 @@ async function drain () {
 async function extractOne (task) {
   const { docId, sessionId } = task
   try {
-    const buffer = await window.solace.readPreview(docId, sessionId)
+    // URL 直读（补丁上游化）：平板端桥有 getDocUrl 时走 URL；桌面回落 IPC 字节
+    // （送来的就是 Uint8Array，直接用——再包一层会白复制一整份文件）
+    const loadOpts = window.solace.getDocUrl
+      ? { url: await window.solace.getDocUrl(docId), ...docParams }
+      : { data: await window.solace.readPreview(docId, sessionId), ...docParams }
     if (task.generation !== generation) return
-    // IPC 送来的就是 Uint8Array，直接用（再包一层 new Uint8Array 会白复制
-    // 一整份文件）；万一拿到别的形态才走包装兜底
-    const data = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
-    task.loadingTask = pdfjsLib.getDocument({ data, ...docParams })
+    task.loadingTask = pdfjsLib.getDocument(loadOpts)
     activePdfs.add(task)
     task.pdf = await task.loadingTask.promise
     if (task.generation !== generation) return

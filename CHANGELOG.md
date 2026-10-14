@@ -6,6 +6,9 @@
 ## [Unreleased]
 
 ### 变更
+- **渲染层平台分支（补丁上游化 C2，与平板端共同实施）**：平板端曾以 30 处 sync 补丁注入的平台差异全部上移进本仓库源码，改用三类运行时机制（平板端正常消费、桌面端零行为差异）：`window.solace.isMobile` 分支（桌面 undefined 走原路径——打开书/拖入/回收站文案/设置监视目录/笔记打开/⌘K 去键盘语）、可选钩子（`window.__spineGroups` 等可选调用——书脊分组桌面口径提为 `spineGroupsByCategory`、笔记行内容与排序、删除通知）、事件派发（`solace-ink-layout/ink-close/outline` no-op，preview.js 收敛 fireWin helper 兼 node 测试桩）。**对桌面端的直接修复**：theme.js 标签保留（溢出菜单「🌓 主题」项的文字曾被 paint() 整写吃掉）。平板端 sync 补丁 44→14，剩余为路径差异与平板专有 DOM。79+渲染冒烟全绿，平板真机回归通过
+
+### 变更（共享层）
 - **共享纯函数层（复用优化 C3）**：新建 `src/main/library-shared.cjs` 作为双端数据层同源纯函数的唯一事实源（平板仓库 sync-www 搬运同一文件至 bridge/）——历次 bug 漂移（0 字节入库/损坏备份命名/settings 守卫）的根因是同一逻辑两份维护。首批上移：normalizeKeyword、dayKey/countOpenDay/getOpenStats（取平板强版：快照读 + 时钟注入）、孤儿清扫正则 APP_FILE_RE/APP_TMP_RE、applySettingsPatch（设置白名单归一，键集两端并集——库互搬设置不丢；changed 判定省无谓写盘）、assertMoveCategory（分类移动防环校验）。library.js 的本地实现删除、包装函数保留守卫与 save 职责。文件头载明提取纪律：只收纯函数（时钟注入）、数据经参数传入、禁平台分支、两端差异取强版统一。79 测试全绿
 
 ### 修复
