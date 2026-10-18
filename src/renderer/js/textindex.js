@@ -104,7 +104,9 @@ export async function searchTextIndex (kw, sessionId = librarySession) {
   }
   let res
   try {
-    res = await window.solace.searchTextIndex(nkw, sessionId)
+    // 带上序号：主进程/桥据此在下一个分片检查点中止旧搜索，不再出现
+    // 「结果早已丢弃、整库还在扫」的浪费
+    res = await window.solace.searchTextIndex(nkw, sessionId, seq)
   } catch {
     if (epoch !== generation || seq !== searchSeq) return
     // 查询失败降级为「只按标题/文件名匹配」，不拿错结果糊弄界面

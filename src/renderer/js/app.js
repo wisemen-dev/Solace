@@ -11,6 +11,21 @@ import './settings.js' // 设置面板：自带事件注册，引入即生效
 let data = null
 let refreshSeq = 0
 let libraryChanging = false
+// 渲染热路径的 O(1) 索引：封面观察器/渲染循环/点击委托/批量操作都按 id
+// 取文档，不能每张卡都 data.documents.find（5000 本时是 O(N²)）。
+// 标题/文件名的归一化结果同样在 refresh 时算一次，搜索逐键直接复用。
+let docsById = new Map()
+let docSearch = new Map()
+let visibleIdsCache = []
+function rebuildDocIndexes () {
+  docsById = new Map()
+  docSearch = new Map()
+  if (!data || !Array.isArray(data.documents)) return
+  for (const d of data.documents) {
+    docsById.set(d.id, d)
+    docSearch.set(d.id, { title: normText(d.title), fileName: normText(d.fileName) })
+  }
+}
 const filters = { categoryId: undefined, tagId: null, keyword: '' }
 let dragDocId = null
 const DEFAULT_DORMANT_DAYS = 30
@@ -83,6 +98,7 @@ async function refresh () {
   }
   if (libraryChanging || ticket !== refreshSeq || (data && next.sessionId < data.sessionId)) return
   data = next
+  rebuildDocIndexes()
   Object.assign(prefs, data.settings || {})
   if (sessionView === null) initSessionView() // 首帧（或刚切过库）才从设置取
   applySettingFlags()
@@ -358,8 +374,12 @@ function visibleDocs () {
     if (filters.categoryId === null && (d.categoryId ?? null) !== null) return false
     if (catIds && !catIds.has(d.categoryId)) return false
     if (filters.tagId && !d.tagIds.includes(filters.tagId)) return false
-    // 三级命中：标题 / 文件名 / 全文索引
-    if (kw && !normText(d.title).includes(kw) && !normText(d.fileName).includes(kw) && !textHit(d.id, kw)) return false
+    // 三级命中：标题 / 文件名 / 全文索引。归一化结果在 refresh 时算过一次，
+    // 这里只做 includes（搜索逐键不再对所有文档 lowerCase+去空白）。
+    if (kw) {
+      const f = docSearch.get(d.id) || { title: normText(d.title), fileName: normText(d.fileName) }
+      if (!f.title.includes(kw) && !f.fileName.includes(kw) && !textHit(d.id, kw)) return false
+    }
     return true
   })
 }
@@ -380,11 +400,12 @@ function renderDocList () {
   syncViewButton()
   // 回退按钮显隐与渲染同步（防御：即使某路径漏清标记也不会残留按钮）
   $('#btnBackShelf').hidden = !(fromShelf && effectiveView() === 'grid')
-  updateBatchBar()
   updateBatchCategoryOptions()
   const entrance = entrancePending // 本次渲染消费一次入场标记
   entrancePending = false
+  // 一次渲染只过滤一遍：批量栏、全选、卡片列表共用这份结果
   const docs = visibleDocs()
+  visibleIdsCache = docs.map(d => d.id)
   const catName = Object.fromEntries(data.categories.map(c => [c.id, c.name]))
   const tagName = Object.fromEntries(data.tags.map(t => [t.id, t.name]))
   const cache = coverCache()
@@ -399,6 +420,7 @@ function renderDocList () {
   // 书架视图没有勾选语义：批量中清空搜索回到书架时自动退出（本帧内直接
   // 复位，不递归重渲染）
   if (shelf && batchMode) resetBatchState()
+  updateBatchBar(docs)
   grid.classList.toggle('spine-mode', sessionView === 'spine' && !shelf)
   grid.classList.toggle('shelf-mode', shelf)
   // 批量勾选只在封面墙提供（书脊无操作按钮、书架是分类书堆）
@@ -428,7 +450,8 @@ function renderDocList () {
       const pr = d.progress
       const pct = progressPct(d)
       // 全文命中标记：标题/文件名没中但正文命中时提示首个命中页
-      const hitPage = nkw && !normText(d.title).includes(nkw) && !normText(d.fileName).includes(nkw)
+      const fields = docSearch.get(d.id) || { title: normText(d.title), fileName: normText(d.fileName) }
+      const hitPage = nkw && !fields.title.includes(nkw) && !fields.fileName.includes(nkw)
         ? textHit(d.id, nkw)
         : 0
 
@@ -458,11 +481,9 @@ function renderDocList () {
     }).join('')
   }
 
-  // 没有缓存的封面交给观察器：滚动可见时才读取/生成（三个陈列视图共用）
-  for (const img of document.querySelectorAll('.doc-cover-img:not([src])')) {
-    const doc = data.documents.find(x => x.id === img.dataset.docId)
-    if (doc) coverObserver.observe(img)
-  }
+  // 没有缓存的封面交给观察器：滚动可见时才读取/生成（三个陈列视图共用）。
+  // 观察本身不需要反查 doc（回调里有 docsById），省掉每张图的 O(N) find。
+  for (const img of grid.querySelectorAll('.doc-cover-img:not([src])')) coverObserver.observe(img)
 }
 
 /* ================= 书脊视图：分类分组陈列 =================
@@ -629,7 +650,7 @@ const coverObserver = new IntersectionObserver((entries) => {
     if (!en.isIntersecting) continue
     const img = en.target
     coverObserver.unobserve(img)
-    const doc = data && data.documents.find(x => x.id === img.dataset.docId)
+    const doc = docsById.get(img.dataset.docId)
     if (doc && !libraryChanging) ensureCover(doc, img, data.sessionId)
   }
 }, { root: document.getElementById('docGrid'), rootMargin: '120px' })
@@ -695,10 +716,7 @@ function renderPileShelf (entrance) {
     </button>`
 
   // 封面懒加载：书堆 img 复用 doc-cover-img 管线（缓存/生成/回填）
-  for (const img of grid.querySelectorAll('.doc-cover-img:not([src])')) {
-    const doc = data.documents.find(x => x.id === img.dataset.docId)
-    if (doc) coverObserver.observe(img)
-  }
+  for (const img of grid.querySelectorAll('.doc-cover-img:not([src])')) coverObserver.observe(img)
 }
 
 function pileStackHtml (books) {
@@ -789,15 +807,17 @@ $('#btnBatch').addEventListener('click', () => {
 $('#btnBatchExit').addEventListener('click', exitBatch)
 
 // 同步操作栏：选中数、删除按钮可用性、全选/取消全选文案。
-// 顺带清掉已不存在的选中项（删书/切库后残留的过期 id）
-function updateBatchBar () {
+// 顺带清掉已不存在的选中项（删书/切库后残留的过期 id）。
+// docs 由 renderDocList 传入；勾选单本时复用 visibleIdsCache，不再每次
+// 都跑一遍 visibleDocs（批量勾选 50 本曾等于 50 次全表过滤）。
+function updateBatchBar (docs) {
   for (const id of [...batchSelected]) {
-    if (!data || !data.documents.some(d => d.id === id)) batchSelected.delete(id)
+    if (!docsById.has(id)) batchSelected.delete(id)
   }
   $('#batchCount').textContent = `已选 ${batchSelected.size} 本`
   $('#btnBatchDel').disabled = batchSelected.size === 0
   $('#batchCategory').disabled = batchSelected.size === 0
-  const visible = visibleDocs().map(d => d.id)
+  const visible = docs ? docs.map(d => d.id) : visibleIdsCache
   const allSel = visible.length > 0 && visible.every(id => batchSelected.has(id))
   $('#btnBatchAll').textContent = allSel ? '取消全选' : '全选当前结果'
 }
@@ -826,7 +846,7 @@ function toggleBatchSel (id) {
 }
 
 $('#btnBatchAll').addEventListener('click', () => {
-  const visible = visibleDocs().map(d => d.id)
+  const visible = visibleIdsCache
   const allSel = visible.length > 0 && visible.every(id => batchSelected.has(id))
   if (allSel) visible.forEach(id => batchSelected.delete(id))
   else visible.forEach(id => batchSelected.add(id))
@@ -847,22 +867,34 @@ $('#batchCategory').addEventListener('change', async (e) => {
   if (target && !data.categories.some(c => c.id === target)) { toast('该分类已不存在，请重试'); return }
   const name = target ? catNameOf(target) : '未分类'
   const ids = [...batchSelected].filter(id => {
-    const d = data.documents.find(x => x.id === id)
+    const d = docsById.get(id)
     return d && d.categoryId !== target
   })
   if (!ids.length) { toast(`所选书籍已全部在「${name}」`); return }
   let done = 0
-  for (const id of ids) {
-    if (!isCurrentLibrary(sessionId)) return
-    try { await window.solace.updateDoc(id, { categoryId: target }, sessionId); done++ }
-    catch { /* 过期选中项（已被删除）等，跳过 */ }
+  let failed = 0
+  if (typeof window.solace.updateDocs === 'function') {
+    // 一次桥/IPC、一次落库（批量归档 50 本不再写 50 次 library.json）
+    try {
+      const out = await window.solace.updateDocs(ids, { categoryId: target }, sessionId)
+      done = out.updated.length
+      failed = out.skipped.length
+    } catch (err) {
+      toast(`批量归档失败：${err.message || err}`)
+      return
+    }
+  } else {
+    for (const id of ids) {
+      if (!isCurrentLibrary(sessionId)) return
+      try { await window.solace.updateDoc(id, { categoryId: target }, sessionId); done++ }
+      catch { failed++ /* 过期选中项（已被删除）等，跳过 */ }
+    }
   }
   if (!isCurrentLibrary(sessionId)) return
   if (done > 0) batchSelected.clear() // 本批已落库：选中即视为消费完毕，下一批从零勾起
   refresh()
-  const skipped = ids.length - done
-  toast(skipped > 0
-    ? `已将 ${done} 本归档到「${name}」（${skipped} 本处理失败）`
+  toast(failed > 0
+    ? `已将 ${done} 本归档到「${name}」（${failed} 本处理失败）`
     : `已将 ${done} 本归档到「${name}」`)
 })
 
@@ -870,7 +902,7 @@ $('#batchCategory').addEventListener('change', async (e) => {
 $('#btnBatchDel').addEventListener('click', async () => {
   if (!data || libraryChanging) return
   const sessionId = data.sessionId
-  const ids = [...batchSelected].filter(id => data.documents.some(d => d.id === id))
+  const ids = [...batchSelected].filter(id => docsById.has(id))
   if (!ids.length) return
   const res = await askConfirm({
     title: `批量删除 ${ids.length} 本文档`,
@@ -884,15 +916,31 @@ $('#btnBatchDel').addEventListener('click', async () => {
   const keptNotes = []
   const leftovers = new Set()
   let purged = 0
-  for (const id of ids) {
-    if (!isCurrentLibrary(sessionId)) return
+  if (typeof window.solace.removeDocs === 'function') {
+    // 一次桥/IPC、一次落库 + 批量文件清理（批量删除 50 本不再写 50 次库）
     try {
-      const out = await window.solace.removeDoc(id, { keepNotes: !res.checked }, sessionId)
-      removed++
-      if (out.notesKeptTo) keptNotes.push(out.notesKeptTo)
-      if (out.notesPurged) purged++
-      for (const l of out.leftovers || []) leftovers.add(l)
-    } catch { /* 过期选中项（已被删除）等，跳过 */ }
+      const out = await window.solace.removeDocs(ids, { keepNotes: !res.checked }, sessionId)
+      removed = out.removed.length
+      for (const r of out.removed) {
+        if (r.notesKeptTo) keptNotes.push(r.notesKeptTo)
+        if (r.notesPurged) purged++
+        for (const l of r.leftovers || []) leftovers.add(l)
+      }
+    } catch (err) {
+      toast(`批量删除失败：${err.message || err}`)
+      return
+    }
+  } else {
+    for (const id of ids) {
+      if (!isCurrentLibrary(sessionId)) return
+      try {
+        const out = await window.solace.removeDoc(id, { keepNotes: !res.checked }, sessionId)
+        removed++
+        if (out.notesKeptTo) keptNotes.push(out.notesKeptTo)
+        if (out.notesPurged) purged++
+        for (const l of out.leftovers || []) leftovers.add(l)
+      } catch { /* 过期选中项（已被删除）等，跳过 */ }
+    }
   }
   if (!isCurrentLibrary(sessionId)) return
   batchSelected.clear()
@@ -1016,7 +1064,7 @@ document.body.addEventListener('click', async (e) => {
       case 'preview-doc': {
         // 批量模式下点击卡片 = 切换选中，不打开预览
         if (batchMode) { toggleBatchSel(id); break }
-        const doc = data.documents.find(d => d.id === id)
+        const doc = docsById.get(id)
         // 搜索中点开的书：全文命中时直接跳到首个命中页
         const kw = normText(filters.keyword)
         const jump = kw ? textHit(id, kw) : 0
@@ -1027,7 +1075,7 @@ document.body.addEventListener('click', async (e) => {
         // 平板端无外部阅读器，直接进内置预览（补丁上游化；isMobile 由平板
         // 桥注入，桌面 undefined 走外部打开）
         if (window.solace.isMobile) {
-          const doc = data.documents.find(d => d.id === id)
+          const doc = docsById.get(id)
           if (doc) openPreview(doc)
           break
         }
@@ -1036,12 +1084,12 @@ document.body.addEventListener('click', async (e) => {
         break
       }
       case 'edit-doc': {
-        const doc = data.documents.find(d => d.id === id)
+        const doc = docsById.get(id)
         if (doc) await openEditDialog(doc)
         break
       }
       case 'del-doc': {
-        const doc = data.documents.find(d => d.id === id)
+        const doc = docsById.get(id)
         if (!doc) break
         const res = await askConfirm({
           title: '删除文档',
@@ -1167,7 +1215,7 @@ catList.addEventListener('drop', async (e) => {
   e.stopPropagation()
   catList.querySelectorAll('.drop-hint').forEach(el => el.classList.remove('drop-hint'))
 
-  const doc = data.documents.find(d => d.id === docId)
+  const doc = docsById.get(docId)
   if (!doc) return
   if (target === 'all') { toast('拖到具体分类或「未分类」即可归档'); return }
   const categoryId = target === 'none' ? null : target
@@ -1663,9 +1711,11 @@ window.addEventListener('solace-index', (e) => {
 })
 
 // 单本索引完成即重查全文命中：防抖合并，整库建索引期间不会每完成一本
-// 就整表重渲染一次
+// 就整表重渲染一次。1.2s 而非 300ms：大 PDF 单本索引常超过 300ms，太短的
+// 窗口会让「每建完一本」都触发一次全库搜索（搜索侧已有 token 取消，但
+// 仍应避免制造无谓扫描）
 window.addEventListener('solace-index-doc', () => {
-  if (normText(filters.keyword)) scheduleFullText(300)
+  if (normText(filters.keyword)) scheduleFullText(1200)
 })
 
 function fmtSize (n) {

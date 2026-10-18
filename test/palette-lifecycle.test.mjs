@@ -172,7 +172,8 @@ test('closing the palette cancels a pending debounce before restoring the main s
   await h.runTimers()
   await settle()
 
-  assert.deepEqual(h.calls.search, [['main', 'library-a']])
+  assert.deepEqual(h.calls.search.map(([kw, sessionId]) => [kw, sessionId]), [['main', 'library-a']])
+  assert.equal(typeof h.calls.search[0][2], 'number', '搜索应携带递增 token 供主进程取消旧扫描')
   assert.equal(h.index.textHit('book', 'main'), 7)
 })
 
@@ -199,7 +200,8 @@ test('palette queries use the session of their captured library snapshot', async
   await h.type('needle')
   await h.runTimers()
 
-  assert.deepEqual(h.calls.search, [['needle', 'library-a']])
+  assert.deepEqual(h.calls.search.map(([kw, sessionId]) => [kw, sessionId]), [['needle', 'library-a']])
+  assert.equal(typeof h.calls.search[0][2], 'number', '搜索应携带递增 token，切库后旧扫描可被取消')
   assert.match(h.el('paletteList').innerHTML, /Current book/)
 })
 

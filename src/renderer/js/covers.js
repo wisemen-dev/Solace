@@ -15,8 +15,10 @@ let draining = null
 
 // 内存上限（全量审查）：dataURL 约 30-80KB/本，万本库浏览可累积数百 MB。
 // FIFO 截断即可——淘汰后再需要会走库内 covers/<id>.jpg 读回（有盘缓存，
-// 不会重新渲染首页生成）
-const COVER_CACHE_MAX = 400
+// 不会重新渲染首页生成）。
+// 平板端 getCoverUrl 返回的是 URL 字符串（WebView 原生直读、不再有 base64
+// 大字符串），缓存条目只有几十字节，可以放宽到 2000 本。
+const COVER_CACHE_MAX = window.solace && typeof window.solace.getCoverUrl === 'function' ? 2000 : 400
 function cacheCover (docId, dataUrl) {
   if (covers.size >= COVER_CACHE_MAX) {
     const oldest = covers.keys().next().value
@@ -59,12 +61,16 @@ export function ensureCover (doc, img, sessionId) {
 
 async function loadCover (task) {
   try {
-    const dataUrl = await window.solace.getCover(task.doc.id, task.sessionId)
+    // 平板端：URL 直读（WebView 原生拦截 _capacitor_file_，JPEG 不过 JS 桥）；
+    // 桌面端无 getCoverUrl，回落 IPC 的 base64 dataURL
+    const cover = typeof window.solace.getCoverUrl === 'function'
+      ? await window.solace.getCoverUrl(task.doc.id, task.sessionId)
+      : await window.solace.getCover(task.doc.id, task.sessionId)
     if (task.generation !== generation) return
     release(task)
-    if (dataUrl) {
-      cacheCover(task.doc.id, dataUrl)
-      fillImgs(task.doc.id, dataUrl)
+    if (cover) {
+      cacheCover(task.doc.id, cover)
+      fillImgs(task.doc.id, cover)
     } else {
       enqueueGenerate(task.doc, task.sessionId)
     }

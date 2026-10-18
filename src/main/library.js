@@ -371,8 +371,7 @@ async function importPdfLocked (filePath, check) {
 // patch 只允许改这三个字段，其余字段由系统维护。
 // 写入侧也做一次形状收敛：tagIds 不是数组会让 removeTag 的 filter、
 // 侧栏的 for...of 直接抛错，categoryId 传 undefined 会让「未分类」筛选漏掉它
-function updateDoc (id, patch) {
-  const doc = findDoc(id)
+function applyDocPatch (doc, patch) {
   if ('title' in patch) {
     const t = String(patch.title == null ? '' : patch.title).trim()
     doc.title = t || stemOf(doc.fileName) || '未命名文档'
@@ -383,8 +382,46 @@ function updateDoc (id, patch) {
   if ('tagIds' in patch) {
     doc.tagIds = Array.isArray(patch.tagIds) ? patch.tagIds.map(String) : doc.tagIds
   }
+}
+
+function updateDoc (id, patch) {
+  const doc = findDoc(id)
+  applyDocPatch(doc, patch)
   save()
   return doc
+}
+
+// 批量改：一次落库（批量归档 50 本不再写 50 次 library.json）。
+// 失效 id 跳过而不是整批失败，返回逐项结果供界面汇总。
+function updateDocs (ids, patch) {
+  const updated = []
+  const skipped = []
+  const before = []
+  const seen = new Set()
+  for (const rawId of Array.isArray(ids) ? ids : []) {
+    const id = String(rawId)
+    if (seen.has(id)) continue
+    seen.add(id)
+    const doc = data.documents.find(d => d.id === id)
+    if (!doc) { skipped.push(id); continue }
+    before.push({ doc, title: doc.title, categoryId: doc.categoryId, tagIds: [...doc.tagIds] })
+    applyDocPatch(doc, patch || {})
+    updated.push(doc)
+  }
+  if (updated.length) {
+    try {
+      save()
+    } catch (err) {
+      // 同步落盘失败：把内存里的批量改动还原，避免“界面已改、磁盘没改”
+      for (const b of before) {
+        b.doc.title = b.title
+        b.doc.categoryId = b.categoryId
+        b.doc.tagIds = b.tagIds
+      }
+      throw err
+    }
+  }
+  return { updated, skipped }
 }
 
 // 删除文档：先做「逻辑删除」（改数据 + 落库，必然成功），库内文件尽力而为。
@@ -407,17 +444,25 @@ function removeDoc (id, opts = {}) {
 
 async function removeDocLocked (id, opts) {
   const doc = findDoc(id)
-  const pdfFile = documentPath(rootDir, 'files', doc.id, '.pdf')
-  const coverFile = documentPath(rootDir, 'covers', doc.id, '.jpg')
-  const indexFile = shardFile(doc.id)
-  const notesDir = documentPath(rootDir, 'notes', doc.id)
-  data.documents = data.documents.filter(d => d.id !== id)
-  if (textIndexMeta.entries[id]) {
-    delete textIndexMeta.entries[id]
-    saveTextIndexMeta()
-    dropShardCache(id)
+  const [result] = await removeDocsLocked([doc], opts)
+  return result
+}
+
+// 路径校验必须在逻辑删除落库之前完成：notes/ 被 junction/symlink 指向库外时
+// documentPath 会抛错，此时一本书都不能从 library.json 里消失。
+function prepareRemovedDoc (doc) {
+  return {
+    doc,
+    pdfFile: documentPath(rootDir, 'files', doc.id, '.pdf'),
+    coverFile: documentPath(rootDir, 'covers', doc.id, '.jpg'),
+    indexFile: shardFile(doc.id),
+    notesDir: documentPath(rootDir, 'notes', doc.id)
   }
-  save()
+}
+
+// 单本文档的文件/笔记清理。逻辑删除已由 removeDocsLocked 统一提交。
+async function cleanupRemovedDoc (prepared, opts) {
+  const { doc, pdfFile, coverFile, indexFile, notesDir } = prepared
   const leftovers = []
   const tryRm = (target, o) => {
     try { fs.rmSync(target, o) } catch { leftovers.push(path.basename(target)) }
@@ -459,7 +504,67 @@ async function removeDocLocked (id, opts) {
       }
     }
   }
-  return { title: doc.title, leftovers, notesKeptTo, notesPurged }
+  return { id: doc.id, title: doc.title, leftovers, notesKeptTo, notesPurged }
+}
+
+// 批量删除内核：先一次性提交逻辑删除（唯一一次 library.json 写入），
+// 再逐本清理文件/笔记。文件清理失败不回滚已提交的删除（与单本语义一致）。
+async function removeDocsLocked (docs, opts) {
+  if (!docs.length) return []
+  // 先做全部路径校验（可抛），再提交逻辑删除
+  const prepared = docs.map(prepareRemovedDoc)
+  const ids = new Set(docs.map(d => d.id))
+  const beforeDocs = data.documents
+  data.documents = data.documents.filter(d => !ids.has(d.id))
+  try {
+    save()
+  } catch (err) {
+    // 落盘失败：恢复内存数组（文件尚未动），避免“已删但盘上还在”的漂移
+    data.documents = beforeDocs
+    throw err
+  }
+
+  let metaChanged = false
+  for (const doc of docs) {
+    if (textIndexMeta.entries[doc.id]) {
+      delete textIndexMeta.entries[doc.id]
+      dropShardCache(doc.id)
+      metaChanged = true
+    }
+  }
+  let metaFailed = false
+  if (metaChanged) {
+    try { saveTextIndexMeta() } catch { metaFailed = true }
+  }
+
+  const results = []
+  for (const item of prepared) {
+    const r = await cleanupRemovedDoc(item, opts)
+    if (metaFailed && results.length === 0) r.leftovers.push('textindex/index.json')
+    results.push(r)
+  }
+  return results
+}
+
+// 批量删除：失效 id 跳过而不是整批失败；返回逐项结果供界面汇总。
+function removeDocs (ids, opts = {}) {
+  const expected = opts.sessionId ?? sessionId
+  return enqueueMutation(async () => {
+    assertSession(expected)
+    const docs = []
+    const skipped = []
+    const seen = new Set()
+    for (const rawId of Array.isArray(ids) ? ids : []) {
+      const id = String(rawId)
+      if (seen.has(id)) continue
+      seen.add(id)
+      const doc = data.documents.find(d => d.id === id)
+      if (doc) docs.push(doc)
+      else skipped.push(id)
+    }
+    const removed = await removeDocsLocked(docs, opts)
+    return { removed, skipped }
+  })
 }
 
 // 库内文件一律以「crypto.randomUUID() + 固定扩展名」命名（v0.1.0 起未变）。
@@ -893,9 +998,15 @@ async function readShardPages (id, expected) {
 }
 
 // 全文搜索：只回传 { docId: 首个命中页码 }。逐本 await 读取（不阻塞主进程
-// 事件循环），并周期性让出，避免大库搜索时窗口消息被卡住
-async function searchTextIndex (kw, expected = sessionId) {
+// 事件循环），并周期性让出，避免大库搜索时窗口消息被卡住。
+// token 由渲染层递增传入：新搜索发起后，旧搜索在下一个检查点直接退出，
+// 不再出现「结果早已丢弃、分片还在整库扫描」的浪费。
+let latestSearchToken = 0
+async function searchTextIndex (kw, expected = sessionId, token) {
   assertSession(expected)
+  // 同一渲染进程的 IPC 按发起顺序到达：直接采用最新 token。不能用 max——
+  // 渲染层重载后 token 从 1 重新开始，旧 max 会把新搜索误判成过期。
+  if (token !== undefined) latestSearchToken = Number(token) || 0
   const needle = normalizeKeyword(kw)
   if (!needle) return {}
   migrateLegacyTextIndex()
@@ -903,9 +1014,11 @@ async function searchTextIndex (kw, expected = sessionId) {
   const hits = {}
   const ids = Object.keys(textIndexMeta.entries).filter(id => live.has(id) && !textIndexMeta.entries[id].failed)
   for (let i = 0; i < ids.length; i++) {
+    if (token !== undefined && token !== latestSearchToken) return {}
     const id = ids[i]
     const pages = await readShardPages(id, expected)
     assertSession(expected)
+    if (token !== undefined && token !== latestSearchToken) return {}
     if (pages) {
       for (let n = 0; n < pages.length; n++) {
         if (pages[n].includes(needle)) { hits[id] = n + 1; break }
@@ -915,7 +1028,10 @@ async function searchTextIndex (kw, expected = sessionId) {
       delete textIndexMeta.entries[id]
       saveTextIndexMeta()
     }
-    if ((i & 15) === 15) await new Promise(r => setImmediate(r))
+    if ((i & 15) === 15) {
+      await new Promise(r => setImmediate(r))
+      if (token !== undefined && token !== latestSearchToken) return {}
+    }
     assertSession(expected)
   }
   return hits
@@ -1115,7 +1231,9 @@ module.exports = {
   relocate,
   importPdf,
   updateDoc,
+  updateDocs,
   removeDoc,
+  removeDocs,
   getDocPath,
   readFileBuffer,
   markOpened,

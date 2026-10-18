@@ -792,3 +792,22 @@ test('孤儿清理：库非空时仍然清理无主的 UUID 副本', async () =>
   library.init(base, { pointerFile: null })
   assert.ok(!fs.existsSync(path.join(root, 'files', orphan)), '库里有书时残留照常清理')
 })
+
+test('批量更新/删除：逐项结果、失效 id 跳过，文件与索引一并清理', async () => {
+  freshLibrary()
+  const a = await library.importPdf(pdfFile('a.pdf', 1))
+  const b = await library.importPdf(pdfFile('b.pdf', 2))
+  const updated = library.updateDocs([a.id, b.id, 'missing'], { categoryId: 'c1' })
+  assert.equal(updated.updated.length, 2)
+  assert.deepEqual(updated.skipped, ['missing'])
+  assert.equal(library.getData().documents.every(d => d.categoryId === 'c1'), true)
+
+  const removed = await library.removeDocs([a.id, 'missing'], { keepNotes: false })
+  assert.equal(removed.removed.length, 1)
+  assert.equal(removed.removed[0].id, a.id)
+  assert.deepEqual(removed.skipped, ['missing'])
+  assert.equal(library.getData().documents.length, 1)
+  assert.ok(!fs.existsSync(path.join(root, 'files', `${a.id}.pdf`)))
+  assert.ok(fs.existsSync(path.join(root, 'files', `${b.id}.pdf`)))
+  assert.equal(library.getTextIndexStatus()[a.id], undefined)
+})

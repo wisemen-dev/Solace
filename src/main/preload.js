@@ -20,14 +20,16 @@ contextBridge.exposeInMainWorld('solace', {
   pickDirectory: (opts) => ipcRenderer.invoke('dialog:pickDirectory', opts),
   // 文档
   updateDoc: (id, patch, sessionId = activeSession) => ipcRenderer.invoke('doc:update', id, patch, sessionId),
+  updateDocs: (ids, patch, sessionId = activeSession) => ipcRenderer.invoke('doc:updateMany', ids, patch, sessionId),
   removeDoc: (id, opts, sessionId = activeSession) => ipcRenderer.invoke('doc:remove', id, opts, sessionId),
+  removeDocs: (ids, opts, sessionId = activeSession) => ipcRenderer.invoke('doc:removeMany', ids, opts, sessionId),
   openDoc: (id, sessionId = activeSession) => ipcRenderer.invoke('doc:open', id, sessionId),
   markRead: (id, sessionId = activeSession) => ipcRenderer.invoke('doc:markRead', id, sessionId),
   readPreview: (id, sessionId = activeSession) => ipcRenderer.invoke('preview:read', id, sessionId),
   setProgress: (id, page, totalPages, sessionId = activeSession) => ipcRenderer.invoke('doc:setProgress', id, page, totalPages, sessionId),
   // 全文索引（清单 + 主进程侧搜索，不把整份索引拉到渲染进程）
   getTextIndexStatus: (sessionId = activeSession) => ipcRenderer.invoke('textindex:status', sessionId),
-  searchTextIndex: (kw, sessionId = activeSession) => ipcRenderer.invoke('textindex:search', kw, sessionId),
+  searchTextIndex: (kw, sessionId = activeSession, token) => ipcRenderer.invoke('textindex:search', kw, sessionId, token),
   setTextIndex: (id, payload, sessionId = activeSession) => ipcRenderer.invoke('textindex:set', id, payload, sessionId),
   // 封面
   setCover: (id, dataUrl, sessionId = activeSession) => ipcRenderer.invoke('cover:set', id, dataUrl, sessionId),

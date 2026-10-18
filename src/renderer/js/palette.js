@@ -22,11 +22,22 @@ const ACTIONS = [
 ]
 
 let lastData = null
+let lastIndex = null // { byId, fields }：打开面板时预计算一次，逐键筛选直接复用
 let items = []
 let activeIdx = 0
 let openTicket = 0
 let queryTimer = null
 let queryTicket = 0
+
+function buildPaletteIndex (data) {
+  const byId = new Map()
+  const fields = new Map()
+  for (const d of data.documents || []) {
+    byId.set(d.id, d)
+    fields.set(d.id, { title: normText(d.title), fileName: normText(d.fileName) })
+  }
+  return { byId, fields }
+}
 
 function invalidatePalette () {
   openTicket++
@@ -35,6 +46,7 @@ function invalidatePalette () {
   queryTimer = null
   searchTextIndex('', lastData?.sessionId)
   lastData = null
+  lastIndex = null
   items = []
   list.innerHTML = ''
 }
@@ -50,6 +62,7 @@ async function openPalette () {
   }
   if (ticket !== openTicket || window.libraryChanging) return
   lastData = snapshot
+  lastIndex = buildPaletteIndex(snapshot)
   input.value = ''
   await searchTextIndex('', snapshot.sessionId) // 全文命中表随面板打开重置（正文在主进程，按需查）
   if (ticket !== openTicket || window.libraryChanging) return
@@ -70,7 +83,7 @@ function buildItems (data, kw) {
     for (const h of (data.history || []).slice(-5).reverse()) {
       if (seen.has(h.docId)) continue
       seen.add(h.docId)
-      const d = data.documents.find(x => x.id === h.docId)
+      const d = lastIndex ? lastIndex.byId.get(h.docId) : data.documents.find(x => x.id === h.docId)
       if (d) out.push({ kind: 'book', icon: '🕘', label: d.title, hint: '最近翻开', payload: { doc: d, hitPage: null } })
     }
     return out.slice(0, 14)
@@ -82,7 +95,9 @@ function buildItems (data, kw) {
 
   const tagName = Object.fromEntries(data.tags.map(t => [t.id, t.name]))
   for (const d of data.documents) {
-    const titleHit = normText(d.title).includes(nkw) || normText(d.fileName).includes(nkw)
+    // 标题/文件名归一化在打开面板时算过一次；逐键只做 includes
+    const f = (lastIndex && lastIndex.fields.get(d.id)) || { title: normText(d.title), fileName: normText(d.fileName) }
+    const titleHit = f.title.includes(nkw) || f.fileName.includes(nkw)
     const hp = titleHit ? 0 : textHit(d.id, nkw)
     if (!titleHit && !hp) continue
     out.push({
@@ -119,10 +134,23 @@ function renderItems () {
   list.querySelector('li.active')?.scrollIntoView({ block: 'nearest' })
 }
 
+// 只移动高亮：鼠标划过命令列表时不再重建整段 innerHTML（14 项 × 每次
+// mousemove 的解析/替换在桌面端也会造成明显抖动）
+function focusItem (idx) {
+  if (idx === activeIdx) return
+  const prev = list.querySelector('li.active')
+  if (prev) prev.classList.remove('active')
+  activeIdx = idx
+  const next = list.querySelector(`li[data-idx="${idx}"]`)
+  if (next) {
+    next.classList.add('active')
+    next.scrollIntoView({ block: 'nearest' })
+  }
+}
+
 function updateActive (delta) {
   if (!items.length) return
-  activeIdx = (activeIdx + delta + items.length) % items.length
-  renderItems()
+  focusItem((activeIdx + delta + items.length) % items.length)
 }
 
 function execute (item) {
@@ -170,8 +198,7 @@ list.addEventListener('click', (e) => {
 
 list.addEventListener('mousemove', (e) => {
   const li = e.target.closest('li[data-idx]')
-  const idx = li ? Number(li.dataset.idx) : -1
-  if (idx >= 0 && idx !== activeIdx) { activeIdx = idx; renderItems() }
+  if (li) focusItem(Number(li.dataset.idx))
 })
 
 // 点对话框空白处（backdrop）关闭

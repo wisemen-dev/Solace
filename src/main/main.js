@@ -211,7 +211,9 @@ function registerIpc () {
   ipcMain.handle('library:importPaths', (_e, paths, sessionId) => importPaths(paths, sessionId))
 
   ipcMain.handle('doc:update', (_e, id, patch, sessionId) => scoped(sessionId, () => library.updateDoc(id, patch)))
+  ipcMain.handle('doc:updateMany', (_e, ids, patch, sessionId) => scoped(sessionId, () => library.updateDocs(ids, patch)))
   ipcMain.handle('doc:remove', (_e, id, opts, sessionId) => scoped(sessionId, () => library.removeDoc(id, { ...opts, sessionId })))
+  ipcMain.handle('doc:removeMany', (_e, ids, opts, sessionId) => scoped(sessionId, () => library.removeDocs(ids, { ...opts, sessionId })))
   ipcMain.handle('doc:setProgress', (_e, id, page, totalPages, sessionId) => scoped(sessionId, () => library.setProgress(id, page, totalPages)))
 
   ipcMain.handle('doc:open', async (_e, id, sessionId = library.getSessionId()) => {
@@ -238,7 +240,7 @@ function registerIpc () {
   // 全文索引：渲染层只取「哪些书已索引」的清单，搜索交给主进程按需读分片，
   // 不再把整份索引（大库上可达几十 MB）结构化克隆给渲染进程
   ipcMain.handle('textindex:status', (_e, sessionId) => scoped(sessionId, () => library.getTextIndexStatus()))
-  ipcMain.handle('textindex:search', (_e, kw, sessionId) => library.searchTextIndex(kw, sessionId))
+  ipcMain.handle('textindex:search', (_e, kw, sessionId, token) => library.searchTextIndex(kw, sessionId, token))
   ipcMain.handle('textindex:set', (_e, id, payload, sessionId) => scoped(sessionId, () => library.setTextIndex(id, payload)))
 
   ipcMain.handle('cat:add', (_e, name, parentId, sessionId) => scoped(sessionId, () => library.addCategory(name, parentId)))
