@@ -7,102 +7,103 @@
 
 /* ---------- 主题 ----------
    三套配色由 <html data-theme> 切换（theme-boot.js 首帧设置，theme.js 维护）：
-   玄墨 ink（冷调深墨）/ 素笺 paper（暖白宣纸）/ 灯下 dusk（暖调深褐）。
+   玄墨 ink（忧郁蓝调）/ 素笺 paper（宣纸朱印）/ 灯下 dusk（烛光暖褐）。
 
-   2026-10-19 整体重做（此前 ink 与 dusk 的明度阶梯几乎同构——card/hover
-   仅差 0.005 L，等于同一套配色换色相）。本轮按「三套性格必须不同」重建，
-   全部色值在 OKLCH 空间定值、逐项过 WCAG：
+   2026-10-19 两轮重做。第一轮只动了 paper 的色相，ink/dusk 仅微调——实测
+   ΔE 只有 0.022/0.020（JND≈0.02），且 ink 的明度跨度反而略缩，等于「换了
+   个名字」。第二轮按「三套性格必须一眼可辨」大改，全部色值在 OKLCH 定值：
 
-   · 明度阶梯：ink 0.170→0.300（跨度 0.130，最深，夜里摊开纸的层次）
-              paper 0.925→0.995（浅色反向阶梯，靠 line 与阴影分离）
-              dusk 0.215→0.350（跨度 0.135，比 ink 整体高一档，像灯下而非深夜）
-   · 强调色按色相彻底分家：ink 石青 242°、paper 靛青 250°、dusk 烛光琥珀 68°
-     ——旧版 ink 蓝 242° 与 paper 琥珀 60° 之间夹着 dusk 琥珀 68°，三色系里
-     有两套暖色，黄昏与纸张在色相上几乎重合
-   · 对比度验收（计算值，含真机偏差余量 ≥10%）：
-     正文/背景 12.0–16.2、次级文字 5.35 起、强调色压在 accent-soft 上 ≥4.57、
-     主按钮文字 6.72 起、危险色 ≥5.12、警示色 ≥5.43。旧版 paper 有三项
-     不达标（accent/soft 3.55、按钮文字 4.23、warn/card 4.34） */
+   · 明度跨度（bg→card-hover）：ink 0.131→0.178（1.36×，最深最冷）
+                                 paper 0.043→0.066（1.52×，反向浅色阶梯）
+                                 dusk 0.102→0.156（1.53×，暖而比 ink 亮一档）
+   · 强调色色相彻底分家：ink 忧郁蓝调 264°（低彩度 0.078、微偏紫——不是
+     科技亮蓝）、paper 朱印茜红 25°、dusk 烛光琥珀 72°。三套之间最短色相
+     距离 >110°，任何两套并排都不会「只是亮了点」
+   · 强调色 ΔE vs 旧版：ink 0.066、paper 0.154、dusk 0.044（均已越过 JND）
+   · 对比度验收（计算值，已留真机偏差余量）：正文/背景 11.6 起、次级文字
+     5.5 起、强调色压在 accent-soft 上 ≥4.5、主按钮文字 6.7 起、
+     危险色 ≥5.2、警示色 ≥5.4、卡片/背景分离 ≥1.15 */
 :root, [data-theme='ink'] {
-  /* 玄墨：冷调深墨（蓝黑），明度最低 */
-  --bg: #0c1016;
-  --panel: #13181f;
-  --card: #1e242d;
-  --card-hover: #272e39;
-  --line: #2f3743;
-  --text: #e9edf2;
-  --muted: #979fa8;
-  /* 石青：比旧版科技蓝（#6ea8fe）沉、绿相少一点，夜里不刺眼 */
-  --accent: #6db4e9;
-  --accent-soft: rgba(109, 180, 233, 0.14);
-  --danger: #ea7963;
-  --warn: #e8bb67;
-  --btn-primary-text: #0c1016;
-  --cover-grad: linear-gradient(160deg, #262e3b 0%, #181e28 100%);
-  --cover-mark: rgba(109, 180, 233, 0.16);
-  --overlay-bg: rgba(7, 10, 14, 0.82);
-  --img-bg: #f4f6f8;
-  --scrollbar-hover: #3a4350;
-  /* 书房氛围：顶光冷蓝晕 + 底部余晖，避免平涂黑 */
+  /* 玄墨 · 忧郁蓝调：深蓝黑底，像 Kind of Blue 的封面。
+     底色带蓝相（oklch 263°）而非中性灰，强调色是**低彩度雾蓝**——
+     彩度压到 0.078（旧版科技蓝 0.13 左右），才有"忧郁"而不是"科技" */
+  --bg: #040812;
+  --panel: #0b121e;
+  --card: #16202e;
+  --card-hover: #253243;
+  --line: #2e3c4f;
+  --text: #e4eaf1;
+  --muted: #929caa;
+  /* 雾蓝：明度 0.715、彩度 0.078、色相 264°（偏紫侧） */
+  --accent: #88a1d2;
+  --accent-soft: rgba(136, 161, 210, 0.14);
+  --danger: #e17366;
+  --warn: #e1b66c;
+  --btn-primary-text: #040812;
+  --cover-grad: linear-gradient(160deg, #1f2c3e 0%, #121a26 100%);
+  --cover-mark: rgba(136, 161, 210, 0.18);
+  --overlay-bg: rgba(4, 7, 13, 0.84);
+  --img-bg: #f2f5f9;
+  --scrollbar-hover: #37465a;
+  /* 氛围：顶部一层极淡的蓝晕（像舞台冷光），右下再压一点更深的蓝 */
   --atmosphere:
-    radial-gradient(1200px 720px at 50% -12%, rgba(109, 180, 233, 0.075), transparent 62%),
-    radial-gradient(900px 620px at 88% 112%, rgba(109, 180, 233, 0.05), transparent 55%);
+    radial-gradient(1200px 720px at 50% -12%, rgba(136, 161, 210, 0.085), transparent 62%),
+    radial-gradient(900px 620px at 88% 112%, rgba(120, 145, 200, 0.06), transparent 55%);
   --grain: 0.05;
 }
 
 [data-theme='paper'] {
-  /* 素笺：宣纸暖白。强调色由琥珀改为靛青——旧版纸张与黄昏同为暖色，
-     切主题时「只是更亮/更暗」的观感太弱；靛青压在宣纸上正是纸墨本色，
-     也让摘录用的琥珀高亮在纸面上不再与强调色撞车 */
-  --bg: #f3f0e7;
-  --panel: #ebe6db;
-  --card: #fbf9f3;
-  --card-hover: #fefdfa;
-  --line: #d7cebe;
-  --img-bg: #f7f4ed;
-  --text: #382b1f;
-  --muted: #685a4b;
-  --accent: #195d9a;
-  --accent-soft: rgba(25, 93, 154, 0.11);
-  --danger: #ac281b;
-  --warn: #834f00;
-  --btn-primary-text: #fffdf8;
-  --cover-grad: linear-gradient(160deg, #e3dccc 0%, #d5cbb8 100%);
-  --cover-mark: rgba(25, 93, 154, 0.2);
-  --overlay-bg: rgba(58, 51, 42, 0.5);
-  --scrollbar-hover: #c5bbaa;
-  /* 纸张氛围：顶部自然光 + 四周极轻的旧纸泛黄（保持中性，不掺强调色，
-     否则整页会泛蓝、宣纸感被冲掉） */
+  /* 素笺 · 宣纸朱印：暖白纸面 + 深茜红强调色（像书页上钤的一方朱印）。
+     底色是纸，强调色是印——两端拉开，不用中性蓝（那样会像"办公软件"） */
+  --bg: #ece8de;
+  --panel: #e5e0d5;
+  --card: #faf8f2;
+  --card-hover: #fffefc;
+  --line: #d7d0c2;
+  --img-bg: #f8f6ef;
+  --text: #36281f;
+  --muted: #685749;
+  --accent: #972527;
+  --accent-soft: rgba(151, 37, 39, 0.11);
+  --danger: #b32733;
+  --warn: #814d00;
+  --btn-primary-text: #fffaf6;
+  --cover-grad: linear-gradient(160deg, #e3ded1 0%, #d4cbbb 100%);
+  --cover-mark: rgba(151, 37, 39, 0.2);
+  --overlay-bg: rgba(58, 46, 40, 0.5);
+  --scrollbar-hover: #c1baab;
+  /* 纸张氛围：顶部自然光 + 四周旧纸泛黄。刻意不掺强调色——朱红晕开
+     会让整页发粉，宣纸感被冲掉 */
   --atmosphere:
-    radial-gradient(1100px 700px at 50% -8%, rgba(255, 254, 249, 0.85), transparent 60%),
-    radial-gradient(1400px 900px at 50% 115%, rgba(200, 186, 160, 0.16), transparent 58%);
+    radial-gradient(1100px 700px at 50% -8%, rgba(255, 255, 252, 0.85), transparent 60%),
+    radial-gradient(1400px 900px at 50% 115%, rgba(198, 184, 158, 0.18), transparent 58%);
   --grain: 0.055;
 }
 
 [data-theme='dusk'] {
-  /* 灯下：暖调深褐灰 + 烛光琥珀。比 ink 整体亮一档（灯亮着，不是深夜），
-     底色降饱和——旧版 #201a12 偏泥黄，大面积铺开显脏 */
-  --bg: #201811;
-  --panel: #2a2018;
-  --card: #382c22;
-  --card-hover: #45372c;
-  --line: #524336;
-  --text: #f1e9df;
-  --muted: #aea190;
-  --accent: #e99f47;
-  --accent-soft: rgba(233, 159, 71, 0.15);
-  --danger: #f47c6b;
-  --warn: #e6c164;
-  --btn-primary-text: #201811;
-  --cover-grad: linear-gradient(160deg, #453629 0%, #30251c 100%);
-  --cover-mark: rgba(233, 159, 71, 0.2);
-  --overlay-bg: rgba(18, 13, 7, 0.82);
-  --img-bg: #f8f5ec;
-  --scrollbar-hover: #5e4e40;
-  /* 黄昏氛围：灯下暖晕从顶部压下，右下炭火余温 */
+  /* 灯下 · 烛光：暖褐深底（比玄墨整体亮一档——灯亮着，不是深夜），
+     强调色烛光琥珀，比旧版更亮更黄，与纸面的朱印红拉开 >45° 色相 */
+  --bg: #1e1209;
+  --panel: #2a1b11;
+  --card: #3a291c;
+  --card-hover: #4a3627;
+  --line: #584232;
+  --text: #f2eade;
+  --muted: #b1a291;
+  --accent: #f8ac3d;
+  --accent-soft: rgba(248, 172, 61, 0.15);
+  --danger: #f9826b;
+  --warn: #e9ca65;
+  --btn-primary-text: #1e1209;
+  --cover-grad: linear-gradient(160deg, #4a3627 0%, #322318 100%);
+  --cover-mark: rgba(248, 172, 61, 0.22);
+  --overlay-bg: rgba(18, 12, 6, 0.84);
+  --img-bg: #f9f6ed;
+  --scrollbar-hover: #634e3e;
+  /* 灯下氛围：暖晕从顶部压下，右下炭火余温 */
   --atmosphere:
-    radial-gradient(1000px 680px at 50% -10%, rgba(233, 159, 71, 0.1), transparent 60%),
-    radial-gradient(820px 560px at 90% 112%, rgba(233, 159, 71, 0.06), transparent 52%);
+    radial-gradient(1000px 680px at 50% -10%, rgba(248, 172, 61, 0.11), transparent 60%),
+    radial-gradient(820px 560px at 90% 112%, rgba(248, 172, 61, 0.07), transparent 52%);
   --grain: 0.05;
 }
 
