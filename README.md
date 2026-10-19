@@ -8,6 +8,9 @@
 Solace 是一款 Windows 桌面应用（Electron），把散落各处的 PDF 收进一座本地图书馆：
 手动分类归档、封面墙浏览、随手翻阅。不联网、不登录、不动你的原文件。
 
+> Android 平板端：[Solace-Mobile](https://github.com/wisemen-dev/Solace-Mobile) ——
+> 与桌面端共用同一套资料库格式，整库可在两端直接互传。
+
 ## 功能
 
 **v0.15（当前）**
