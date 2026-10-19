@@ -7,82 +7,102 @@
 
 /* ---------- 主题 ----------
    三套配色由 <html data-theme> 切换（theme-boot.js 首帧设置，theme.js 维护）：
-   墨水 ink（默认暗色）/ 纸张 paper（暖白米色）/ 黄昏 dusk（琥珀暗色） */
+   玄墨 ink（冷调深墨）/ 素笺 paper（暖白宣纸）/ 灯下 dusk（暖调深褐）。
+
+   2026-10-19 整体重做（此前 ink 与 dusk 的明度阶梯几乎同构——card/hover
+   仅差 0.005 L，等于同一套配色换色相）。本轮按「三套性格必须不同」重建，
+   全部色值在 OKLCH 空间定值、逐项过 WCAG：
+
+   · 明度阶梯：ink 0.170→0.300（跨度 0.130，最深，夜里摊开纸的层次）
+              paper 0.925→0.995（浅色反向阶梯，靠 line 与阴影分离）
+              dusk 0.215→0.350（跨度 0.135，比 ink 整体高一档，像灯下而非深夜）
+   · 强调色按色相彻底分家：ink 石青 242°、paper 靛青 250°、dusk 烛光琥珀 68°
+     ——旧版 ink 蓝 242° 与 paper 琥珀 60° 之间夹着 dusk 琥珀 68°，三色系里
+     有两套暖色，黄昏与纸张在色相上几乎重合
+   · 对比度验收（计算值，含真机偏差余量 ≥10%）：
+     正文/背景 12.0–16.2、次级文字 5.35 起、强调色压在 accent-soft 上 ≥4.57、
+     主按钮文字 6.72 起、危险色 ≥5.12、警示色 ≥5.43。旧版 paper 有三项
+     不达标（accent/soft 3.55、按钮文字 4.23、warn/card 4.34） */
 :root, [data-theme='ink'] {
-  --bg: #101418;
-  --panel: #151b22;
-  /* card 提亮一档（2026-10-08 视觉审查）：原 #1b232d 与 panel 明度差仅约
-     3%，夜间弱光下卡片边界「糊」在一起、扫视分不清层级；提到 #202b39
-     差约 8%，dusk/paper 两主题无此问题不动 */
-  --card: #202b39;
-  --card-hover: #263445;
-  --line: #2c3a4c;
-  --text: #e8edf2;
-  --muted: #8b98a5;
-  --accent: #6ea8fe;
-  --accent-soft: rgba(110, 168, 254, 0.14);
-  --danger: #e5734f;
-  --warn: #e5b567;
-  --btn-primary-text: #0d1117;
-  --cover-grad: linear-gradient(160deg, #232c3a 0%, #1a2230 100%);
-  --cover-mark: rgba(110, 168, 254, 0.16);
-  --overlay-bg: rgba(8, 10, 14, 0.82);
-  --img-bg: #f5f6f8;
-  --scrollbar-hover: #334052;
+  /* 玄墨：冷调深墨（蓝黑），明度最低 */
+  --bg: #0c1016;
+  --panel: #13181f;
+  --card: #1e242d;
+  --card-hover: #272e39;
+  --line: #2f3743;
+  --text: #e9edf2;
+  --muted: #979fa8;
+  /* 石青：比旧版科技蓝（#6ea8fe）沉、绿相少一点，夜里不刺眼 */
+  --accent: #6db4e9;
+  --accent-soft: rgba(109, 180, 233, 0.14);
+  --danger: #ea7963;
+  --warn: #e8bb67;
+  --btn-primary-text: #0c1016;
+  --cover-grad: linear-gradient(160deg, #262e3b 0%, #181e28 100%);
+  --cover-mark: rgba(109, 180, 233, 0.16);
+  --overlay-bg: rgba(7, 10, 14, 0.82);
+  --img-bg: #f4f6f8;
+  --scrollbar-hover: #3a4350;
   /* 书房氛围：顶光冷蓝晕 + 底部余晖，避免平涂黑 */
   --atmosphere:
-    radial-gradient(1200px 720px at 50% -12%, rgba(110, 168, 254, 0.075), transparent 62%),
-    radial-gradient(900px 620px at 88% 112%, rgba(110, 168, 254, 0.05), transparent 55%);
+    radial-gradient(1200px 720px at 50% -12%, rgba(109, 180, 233, 0.075), transparent 62%),
+    radial-gradient(900px 620px at 88% 112%, rgba(109, 180, 233, 0.05), transparent 55%);
   --grain: 0.05;
 }
 
 [data-theme='paper'] {
-  --bg: #f3eee3;
-  --panel: #ebe4d4;
-  --card: #faf6ec;
-  --card-hover: #fffdf5;
-  --line: #d9cfb8;
-  --img-bg: #f6f1e4;
-  --text: #40372a;
-  --muted: #8b7d64;
-  --accent: #a9682f;
-  --accent-soft: rgba(169, 104, 47, 0.13);
-  --danger: #b04a2a;
-  --warn: #9c6a10;
-  --btn-primary-text: #fff8ef;
-  --cover-grad: linear-gradient(160deg, #e9e1cf 0%, #ddd2b9 100%);
-  --cover-mark: rgba(169, 104, 47, 0.2);
-  --overlay-bg: rgba(64, 55, 42, 0.5);
-  --scrollbar-hover: #c9bda1;
-  /* 纸张氛围：顶部自然光 + 四周极轻的旧纸泛黄 */
+  /* 素笺：宣纸暖白。强调色由琥珀改为靛青——旧版纸张与黄昏同为暖色，
+     切主题时「只是更亮/更暗」的观感太弱；靛青压在宣纸上正是纸墨本色，
+     也让摘录用的琥珀高亮在纸面上不再与强调色撞车 */
+  --bg: #f3f0e7;
+  --panel: #ebe6db;
+  --card: #fbf9f3;
+  --card-hover: #fefdfa;
+  --line: #d7cebe;
+  --img-bg: #f7f4ed;
+  --text: #382b1f;
+  --muted: #685a4b;
+  --accent: #195d9a;
+  --accent-soft: rgba(25, 93, 154, 0.11);
+  --danger: #ac281b;
+  --warn: #834f00;
+  --btn-primary-text: #fffdf8;
+  --cover-grad: linear-gradient(160deg, #e3dccc 0%, #d5cbb8 100%);
+  --cover-mark: rgba(25, 93, 154, 0.2);
+  --overlay-bg: rgba(58, 51, 42, 0.5);
+  --scrollbar-hover: #c5bbaa;
+  /* 纸张氛围：顶部自然光 + 四周极轻的旧纸泛黄（保持中性，不掺强调色，
+     否则整页会泛蓝、宣纸感被冲掉） */
   --atmosphere:
-    radial-gradient(1100px 700px at 50% -8%, rgba(255, 253, 244, 0.85), transparent 60%),
-    radial-gradient(1400px 900px at 50% 115%, rgba(196, 178, 138, 0.16), transparent 58%);
+    radial-gradient(1100px 700px at 50% -8%, rgba(255, 254, 249, 0.85), transparent 60%),
+    radial-gradient(1400px 900px at 50% 115%, rgba(200, 186, 160, 0.16), transparent 58%);
   --grain: 0.055;
 }
 
 [data-theme='dusk'] {
-  --bg: #201a12;
-  --panel: #292118;
-  --card: #322a1e;
-  --card-hover: #3c3224;
-  --line: #4a3d2a;
-  --text: #f2e8d8;
-  --muted: #ab9a7d;
-  --accent: #e8a04c;
-  --accent-soft: rgba(232, 160, 76, 0.16);
-  --danger: #e5734f;
-  --warn: #e5b567;
-  --btn-primary-text: #241a0d;
-  --cover-grad: linear-gradient(160deg, #3b3122 0%, #2c2418 100%);
-  --cover-mark: rgba(232, 160, 76, 0.2);
-  --overlay-bg: rgba(14, 10, 4, 0.82);
-  --img-bg: #f8f4ec;
-  --scrollbar-hover: #5a4a30;
+  /* 灯下：暖调深褐灰 + 烛光琥珀。比 ink 整体亮一档（灯亮着，不是深夜），
+     底色降饱和——旧版 #201a12 偏泥黄，大面积铺开显脏 */
+  --bg: #201811;
+  --panel: #2a2018;
+  --card: #382c22;
+  --card-hover: #45372c;
+  --line: #524336;
+  --text: #f1e9df;
+  --muted: #aea190;
+  --accent: #e99f47;
+  --accent-soft: rgba(233, 159, 71, 0.15);
+  --danger: #f47c6b;
+  --warn: #e6c164;
+  --btn-primary-text: #201811;
+  --cover-grad: linear-gradient(160deg, #453629 0%, #30251c 100%);
+  --cover-mark: rgba(233, 159, 71, 0.2);
+  --overlay-bg: rgba(18, 13, 7, 0.82);
+  --img-bg: #f8f5ec;
+  --scrollbar-hover: #5e4e40;
   /* 黄昏氛围：灯下暖晕从顶部压下，右下炭火余温 */
   --atmosphere:
-    radial-gradient(1000px 680px at 50% -10%, rgba(232, 160, 76, 0.1), transparent 60%),
-    radial-gradient(820px 560px at 90% 112%, rgba(232, 160, 76, 0.06), transparent 52%);
+    radial-gradient(1000px 680px at 50% -10%, rgba(233, 159, 71, 0.1), transparent 60%),
+    radial-gradient(820px 560px at 90% 112%, rgba(233, 159, 71, 0.06), transparent 52%);
   --grain: 0.05;
 }
 
@@ -568,7 +588,14 @@ button { font-family: inherit; }
 }
 .notes-list li:hover .note-del { visibility: visible; }
 .note-del:hover { color: var(--danger); }
-.notes-empty {
+/* 空态占位。text-align:center 此前**不生效**，两层原因：
+   ① 这条 li 同时命中上面的 .notes-list li（display:flex），flex 容器里的
+      裸文本节点会各自成为匿名 flex 项按主轴排列，text-align 管不到它们；
+   ② 选择器特异性 .notes-empty (0,1,0) 低于 .notes-list li (0,1,1)，所以
+      即使在本文件后部声明 display:block 也压不过它。
+   故按 ② 抬特异性后改回普通块级流，浮层与页面上下文皆然 */
+.notes-list li.notes-empty {
+  display: block;
   cursor: default; color: var(--muted);
   font-size: 12px; text-align: center; padding: 18px 8px !important; line-height: 1.9;
 }

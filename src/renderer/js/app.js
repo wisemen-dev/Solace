@@ -343,14 +343,28 @@ async function refreshTextHits (kw) {
 
 // 分类调色板：按顶级分类顺序循环取色。书架书堆与书脊组头经
 // topCategoryColor 取色（子分类继承顶级色）；分类分布图表按自己的
-// 排序直接索引
-const PALETTE = ['#6ea8fe', '#7bd88f', '#ffd166', '#ef8354', '#c792ea', '#4dd0e1', '#f06292', '#aed581', '#ffb74d']
-const MISC_COLOR = '#5b6672'
+// 排序直接索引。
+// 色板只在深色主题下成立：这批高饱和亮色压在纸上（浅色主题 bg/card）
+// 对比度只有 1.3–2.9:1，色点与书脊色条几乎看不见——2026-10-19 三主题
+// 重做时一并修掉：按当前主题的明暗走两支色板（深色用亮支、浅色用深支），
+// 两支同色相同序，换主题时分类的「色相身份」不变，只是明度反向
+const PALETTE_DARK = ['#6ea8fe', '#7bd88f', '#ffd166', '#ef8354', '#c792ea', '#4dd0e1', '#f06292', '#aed581', '#ffb74d']
+const PALETTE_LIGHT = ['#1f5fa8', '#2f7a45', '#8a6100', '#b1501f', '#7b45a8', '#0e6f7a', '#b5346a', '#4a6b1f', '#a05a00']
+const MISC_DARK = '#5b6672'
+const MISC_LIGHT = '#5b6672'
+
+// 主题在 <html data-theme> 上，theme.js 已保证首帧就位；只在取色时读一次
+// dataset，不做监听（换主题本来就会整页重渲染）
+function paletteFor () {
+  const t = document.documentElement.dataset.theme
+  return t === 'paper' ? { list: PALETTE_LIGHT, misc: MISC_LIGHT } : { list: PALETTE_DARK, misc: MISC_DARK }
+}
 
 // 未分类与悬空引用（元数据损坏指向已删分类）用补色；
 // 其余沿 parentId 上溯到顶级分类后按其在顶级序列中的位置取色
 function topCategoryColor (catId) {
-  if (!catId) return MISC_COLOR
+  const { list, misc } = paletteFor()
+  if (!catId) return misc
   const topIndex = new Map(data.categories.filter(c => !c.parentId).map((c, i) => [c.id, i]))
   let c = data.categories.find(x => x.id === catId)
   // seen 防环（全量审查 P1）：moveCategory 有环校验，但 library.json 与
@@ -361,7 +375,7 @@ function topCategoryColor (catId) {
     seen.add(c.id)
     c = data.categories.find(x => x.id === c.parentId)
   }
-  return c && !c.parentId ? PALETTE[topIndex.get(c.id) % PALETTE.length] : MISC_COLOR
+  return c && !c.parentId ? list[topIndex.get(c.id) % list.length] : misc
 }
 
 function visibleDocs () {
@@ -681,10 +695,11 @@ function renderPileShelf (entrance) {
   }))
   const uncat = data.documents.filter(d => !d.categoryId)
   if (uncat.length) {
+    const { misc } = paletteFor()
     piles.push({
       key: 'none',
       name: '未分类',
-      color: MISC_COLOR,
+      color: misc,
       count: uncat.length,
       books: uncat.slice(0, 4)
     })
@@ -1554,9 +1569,10 @@ function renderCategoryChart () {
     catStats[i].opens += d.openCount
   }
 
+  const { list: catPalette, misc } = paletteFor()
   const colored = catStats
     .filter(s => s.books > 0)
-    .map((s, i) => ({ ...s, color: s.misc ? MISC_COLOR : PALETTE[i % PALETTE.length] }))
+    .map((s, i) => ({ ...s, color: s.misc ? misc : catPalette[i % catPalette.length] }))
 
   const total = docs.length
   let acc = 0

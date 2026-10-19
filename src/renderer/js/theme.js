@@ -1,16 +1,16 @@
-// 主题系统：自动（按时段）/ 墨水（暗）/ 纸张（暖白）/ 黄昏（琥珀）。
+// 主题系统：自动（按时段）/ 玄墨（冷调深色）/ 素笺（暖白宣纸）/ 灯下（暖调深褐）。
 // 配色全部由 style.css 的 [data-theme] CSS 变量承载，这里只负责：
 // 1) 把解析后的主题写到 <html data-theme>（并同步 localStorage，供
 //    theme-boot.js 在下一帧渲染前设置，避免启动时闪错色）
-// 2) 「自动」= 按时段切换：7–12 点纸张，12–18 点黄昏，其余（18 点–次日
-//    7 点）墨水；运行中每分钟重估，到点实时跟随（0.10.0 曾改为跟随系统
+// 2) 「自动」= 按时段切换：7–12 点素笺，12–18 点灯下，其余（18 点–次日
+//    7 点）玄墨；运行中每分钟重估，到点实时跟随（0.10.0 曾改为跟随系统
 //    深浅色，现按需求改回时段制）
 // 3) 顶栏按钮循环切换并持久化；设置面板可直接选定（双入口同源）；
 //    手动切到固定主题即离开「自动」，定时器不再干预
 // 4) 同步「开馆动画」开关到 localStorage，供 theme-boot.js 跳过首帧动画
 
 const CYCLE = ['auto', 'ink', 'paper', 'dusk']
-const MODE_LABEL = { auto: '自动（按时段）', ink: '墨水', paper: '纸张', dusk: '黄昏' }
+const MODE_LABEL = { auto: '自动（按时段）', ink: '玄墨', paper: '素笺', dusk: '灯下' }
 
 // 导出仅供边界时间测试使用
 export function resolvedFor (mode, now = new Date()) {
@@ -89,7 +89,7 @@ export function applyTheme (settings) {
   paint(settings)
 }
 
-// 循环切换：自动 → 墨水 → 纸张 → 黄昏 → 自动。返回持久化用的 patch。
+// 循环切换：自动 → 玄墨 → 素笺 → 灯下 → 自动。返回持久化用的 patch。
 export function cycleTheme (settings) {
   const current = document.documentElement.dataset.themeMode || 'auto'
   settings.theme = nextMode(current)
