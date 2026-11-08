@@ -362,22 +362,32 @@ async function renderPage () {
     // 双缓冲：pdf.js 的 render 会先画整页白底再逐笔画内容——直接画到显示
     // canvas 时旧页被白底刷掉、内容跟上前的间隙就是翻页白板闪（真机 rAF
     // 帧采样实测每次翻页 3~4 帧全白）。离屏渲染完成后一次性上屏，显示
-    // canvas 从旧页直达新页；取消/失败时不 drawImage，旧帧保持
-    if (!renderBuf) renderBuf = document.createElement('canvas')
-    renderBuf.width = fitted.width
-    renderBuf.height = fitted.height
-    const task = page.render({ canvasContext: renderBuf.getContext('2d'), viewport: fitted.viewport })
+    // canvas 从旧页直达新页；取消/失败时不 drawImage，旧帧保持。
+    // 能力探测回落：node 渲染冒烟的 DOM 替身没有 document.createElement
+    // （fireWin 守卫同款先例）——无离屏能力时直接画显示 canvas，行为同
+    // 双缓冲引入前，替身路径零新行为
+    let renderCtx = canvas.getContext('2d')
+    const directCtx = renderCtx
+    if (typeof document.createElement === 'function') {
+      if (!renderBuf) renderBuf = document.createElement('canvas')
+      renderBuf.width = fitted.width
+      renderBuf.height = fitted.height
+      renderCtx = renderBuf.getContext('2d')
+    }
+    const task = page.render({ canvasContext: renderCtx, viewport: fitted.viewport })
     state.task = task
     canvasTask = task
     await task.promise
     if (!isCurrentSession(token, pdfDoc)) return
-    canvas.getContext('2d').drawImage(renderBuf, 0, 0)
-    // 新内容上屏的轻确认脉冲（挂 .page-in，120ms、透明度只从 0.88 起）：
-    // 样式由各端自带（平板 mobile.css；桌面无对应样式即 no-op）。先摘类
-    // 再强制 reflow 后重挂——连续翻页时重启动画而非被「已挂」短路
-    canvas.classList.remove('page-in')
-    void canvas.offsetWidth
-    canvas.classList.add('page-in')
+    if (renderCtx !== directCtx) {
+      canvas.getContext('2d').drawImage(renderBuf, 0, 0)
+      // 新内容上屏的轻确认脉冲（挂 .page-in，120ms、透明度只从 0.88 起）：
+      // 样式由各端自带（平板 mobile.css；桌面无对应样式即 no-op）。先摘类
+      // 再强制 reflow 后重挂——连续翻页时重启动画而非被「已挂」短路
+      canvas.classList.remove('page-in')
+      void canvas.offsetWidth
+      canvas.classList.add('page-in')
+    }
   } catch (err) {
     // 关闭预览时 pdf.destroy() 会打断在途渲染，这里报的「失败」并不是真失败：
     // 只在仍属于当前会话时才写错误浮层
